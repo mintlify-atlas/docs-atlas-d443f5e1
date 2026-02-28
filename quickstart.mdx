@@ -1,0 +1,375 @@
+---
+title: Quickstart
+description: Get started with AI Studio in minutes. Create your first project and generate AI-enhanced property photos.
+---
+
+## Welcome to AI Studio
+
+This quickstart guide will walk you through creating your first AI-enhanced property photo project. You'll learn how to:
+
+- Create a workspace and set up your account
+- Upload property photos
+- Apply AI-powered style templates
+- Download your enhanced images
+
+<Note>
+This guide focuses on using AI Studio as a user. For development setup, see the [Development Setup](/development/setup) guide.
+</Note>
+
+## Sign up and create your workspace
+
+<Steps>
+  <Step title="Create your account">
+    Visit the AI Studio platform and sign up with your email address. You'll receive a verification email to confirm your account.
+  </Step>
+  
+  <Step title="Complete workspace onboarding">
+    After email verification, you'll be guided through workspace creation:
+    
+    - **Workspace name**: Choose a name for your team or agency
+    - **Company details**: For invoice-eligible workspaces (Norwegian B2B)
+    - **White-label branding**: Upload logo and set brand colors (Enterprise plan)
+    
+    ```typescript
+    // From source: lib/db/schema.ts:15-46
+    export const workspace = pgTable("workspace", {
+      id: text("id").primaryKey(),
+      name: text("name").notNull(),
+      slug: text("slug").notNull().unique(),
+      organizationNumber: text("organization_number"), // Norwegian org number
+      contactEmail: text("contact_email"),
+      logo: text("logo"),
+      primaryColor: text("primary_color"),
+      plan: text("plan").notNull().default("free"), // free | pro | enterprise
+      status: text("status").notNull().default("active"),
+    });
+    ```
+  </Step>
+  
+  <Step title="Choose your plan">
+    Select a plan based on your needs:
+    
+    - **Free**: 10 projects per month, basic features
+    - **Pro**: Unlimited projects, advanced editing ($99/month)
+    - **Enterprise**: Custom pricing, white-label, priority support
+    
+    See [Pricing](/platform/pricing) for detailed plan comparison.
+  </Step>
+</Steps>
+
+## Create your first project
+
+<Steps>
+  <Step title="Navigate to dashboard">
+    After onboarding, you'll land on the Projects dashboard. Click **Create Project** to start.
+  </Step>
+  
+  <Step title="Upload property photos">
+    Upload one or more property images:
+    
+    - **Supported formats**: JPG, PNG, WebP
+    - **Recommended size**: 1024x1024 to 2048x2048 pixels
+    - **File size limit**: 10 MB per image
+    
+    Images are automatically uploaded to Supabase Storage in your workspace bucket.
+  </Step>
+  
+  <Step title="Select style template">
+    Choose a style template for your photos. Currently available:
+    
+    **Scandinavian** - Light, airy spaces with natural wood and minimal decor
+    
+    ```typescript
+    // From source: lib/style-templates.ts:82-92
+    {
+      id: "scandinavian",
+      name: "Scandinavian",
+      category: "staging",
+      prompt: "Transform into a Scandinavian-style interior. Add light wooden furniture, 
+               white and neutral tones, natural textures like linen and wool, minimalist 
+               decor with clean lines. Include plants for freshness. The space should feel 
+               bright, calm, and inviting with excellent natural lighting."
+    }
+    ```
+    
+    <Info>
+    More style templates (Modern Luxury, Coastal, Industrial) are coming soon!
+    </Info>
+  </Step>
+  
+  <Step title="Select room type">
+    Specify the room type for better AI context:
+    
+    - Living room
+    - Bedroom
+    - Kitchen
+    - Bathroom
+    - Dining room
+    - Office
+    - Exterior
+    
+    The room type is added to the AI prompt for more accurate transformations.
+    
+    ```typescript
+    // From source: lib/style-templates.ts:65-80
+    export function generatePrompt(template: StyleTemplate, roomType: string | null): string {
+      const preserveStructure = 
+        "Do not move, remove, or modify windows, walls, doors, or any architectural elements. 
+         Keep the room layout exactly as shown.";
+      
+      let prompt = template.prompt;
+      
+      if (roomType) {
+        const roomLabel = roomType.replace(/-/g, " ");
+        prompt = `This is a ${roomLabel}. ${prompt}`;
+      }
+      
+      return `${prompt} ${preserveStructure}`;
+    }
+    ```
+  </Step>
+  
+  <Step title="Name your project">
+    Give your project a descriptive name like "123 Main St - Living Room" or "Downtown Penthouse Photos".
+  </Step>
+</Steps>
+
+## Process your images
+
+<Steps>
+  <Step title="Start AI processing">
+    Click **Generate** to start the AI enhancement process. Your images are processed using Fal.ai's Nano Banana Pro model.
+    
+    The system creates a background job via Trigger.dev:
+    
+    ```typescript
+    // From source: trigger/process-image.ts:100-110
+    export const processImageTask = task({
+      id: "process-image",
+      queue: { name: "image-processing", concurrencyLimit: 3 },
+      maxDuration: 600, // 10 minutes
+      run: async (payload) => {
+        // 1. Fetch image from Supabase
+        // 2. Upload to Fal.ai
+        // 3. Generate enhanced image
+        // 4. Save result to Supabase
+      }
+    });
+    ```
+  </Step>
+  
+  <Step title="Monitor progress">
+    Watch real-time progress updates on the dashboard:
+    
+    - **Pending**: Waiting to start
+    - **Processing**: AI model running (typically 30-60 seconds)
+    - **Completed**: Enhanced image ready
+    - **Failed**: Check error message
+    
+    <Tip>
+    Processing time: ~30-60 seconds per image. Multiple images process in parallel (up to 3 at a time).
+    </Tip>
+  </Step>
+  
+  <Step title="View results">
+    Once processing completes, you'll see:
+    
+    - **Before/after comparison**: Side-by-side view with slider
+    - **Full-screen lightbox**: Click to view enlarged
+    - **Download options**: Individual or bulk download
+    - **Version history**: If you make additional edits
+  </Step>
+</Steps>
+
+## Download your enhanced photos
+
+<Tabs>
+  <Tab title="Single image">
+    Hover over any image and click the **Download** button. The enhanced photo downloads directly to your device.
+  </Tab>
+  
+  <Tab title="Bulk download">
+    Select multiple images using checkboxes, then click **Download Selected**. AI Studio creates a ZIP archive containing all selected images.
+    
+    ```typescript
+    // From source: app/api/download/[projectId]/route.ts
+    export async function GET(request: Request, { params }: { params: { projectId: string } }) {
+      // Creates ZIP archive using archiver
+      const archive = archiver("zip", { zlib: { level: 9 } });
+      
+      // Add all completed images
+      for (const image of images) {
+        const response = await fetch(image.resultImageUrl);
+        const buffer = await response.arrayBuffer();
+        archive.append(Buffer.from(buffer), { 
+          name: `${image.id}.jpg` 
+        });
+      }
+      
+      return new Response(archive, {
+        headers: {
+          "Content-Type": "application/zip",
+          "Content-Disposition": `attachment; filename="${projectName}.zip"`
+        }
+      });
+    }
+    ```
+  </Tab>
+  
+  <Tab title="Project export">
+    From the project detail page, click **Download All** to get a complete ZIP archive of all enhanced images in the project.
+  </Tab>
+</Tabs>
+
+## Advanced editing (inpainting)
+
+For more control, use the inpainting feature to add or remove specific elements:
+
+<Steps>
+  <Step title="Select an image">
+    From your completed project, click **Edit** on any image.
+  </Step>
+  
+  <Step title="Draw a mask">
+    Use the brush tool to mark the area you want to modify. The mask is exported as a data URL.
+  </Step>
+  
+  <Step title="Choose edit mode">
+    - **Remove**: Erase objects (furniture, wall art, etc.)
+    - **Add**: Insert new elements with text prompt
+    
+    ```typescript
+    // From source: app/api/inpaint-image/route.ts
+    interface InpaintRequest {
+      imageId: string;
+      maskDataUrl: string; // Base64 PNG mask
+      prompt: string;
+      mode: "remove" | "add";
+      replaceNewerVersions: boolean;
+    }
+    ```
+  </Step>
+  
+  <Step title="Generate new version">
+    Click **Apply** to create a new version. The system uses Qwen Inpaint model for targeted edits.
+    
+    All versions are preserved in the database with parent-child relationships:
+    
+    ```typescript
+    // From source: lib/db/schema.ts:220-225
+    export const imageGeneration = pgTable("image_generation", {
+      id: text("id").primaryKey(),
+      version: integer("version").notNull().default(1), // v1, v2, v3...
+      parentId: text("parent_id"), // Links to original for version chain
+      status: text("status").notNull().default("pending"),
+    });
+    ```
+  </Step>
+</Steps>
+
+## Payment (Pro/Enterprise plans)
+
+If you're on a paid plan, you'll be prompted to complete payment before processing:
+
+<Tabs>
+  <Tab title="Stripe (International)">
+    1. Click **Pay with Card** when prompted
+    2. Enter payment details in Stripe Checkout
+    3. Processing starts automatically after payment
+    
+    Cost: $99 USD per project (Pro plan)
+  </Tab>
+  
+  <Tab title="Invoice (Norwegian B2B)">
+    For invoice-eligible workspaces:
+    
+    1. Processing starts immediately (no upfront payment)
+    2. Invoice created automatically via Fiken integration
+    3. Payment due within 30 days
+    
+    Cost: 1000 NOK per project (customizable for Enterprise)
+    
+    ```typescript
+    // From source: lib/db/schema.ts:489-509
+    export const workspacePricing = pgTable("workspace_pricing", {
+      workspaceId: text("workspace_id").notNull().unique(),
+      imageProjectPriceOre: integer("image_project_price_ore"), // 100000 ore = 1000 NOK
+      videoProjectPriceOre: integer("video_project_price_ore"),
+      fikenContactId: integer("fiken_contact_id"),
+    });
+    ```
+  </Tab>
+</Tabs>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Create video tours" icon="video" href="/features/video-creation">
+    Turn your enhanced photos into professional property tour videos
+  </Card>
+  
+  <Card title="Invite your team" icon="users" href="/features/team-collaboration">
+    Add team members and collaborate on projects
+  </Card>
+  
+  <Card title="Explore style templates" icon="palette" href="/features/style-templates">
+    Learn about available styles and future templates
+  </Card>
+  
+  <Card title="API integration" icon="code" href="/api-reference/auth/overview">
+    Integrate AI Studio into your existing workflow
+  </Card>
+</CardGroup>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Image processing failed">
+    **Common causes:**
+    - Image file is corrupted or invalid format
+    - Fal.ai API is temporarily unavailable
+    - Image resolution too low (< 512x512)
+    
+    **Solution:** Re-upload the image or try again in a few minutes. Check that your image meets the size requirements.
+  </Accordion>
+  
+  <Accordion title="'Architectural elements changed' warning">
+    The AI model occasionally modifies windows, walls, or doors despite instructions to preserve them.
+    
+    **Solution:** Use the inpainting feature to manually restore affected areas, or regenerate the image.
+  </Accordion>
+  
+  <Accordion title="Payment declined">
+    **For Stripe:**
+    - Verify card details are correct
+    - Check with your bank for declined transactions
+    - Try a different payment method
+    
+    **For invoice:**
+    - Confirm your workspace has `invoiceEligible: true`
+    - Verify organization number is correct
+  </Accordion>
+  
+  <Accordion title="Slow processing times">
+    Processing time varies based on:
+    - Image size (larger = slower)
+    - Queue load (up to 3 concurrent images)
+    - Fal.ai model availability
+    
+    **Typical times:**
+    - 1024x1024: 30-45 seconds
+    - 2048x2048: 60-90 seconds
+  </Accordion>
+</AccordionGroup>
+
+## Getting help
+
+Need assistance? Here are your options:
+
+- **Documentation**: Browse guides in the sidebar
+- **Contact support**: Email support@aistudio.example.com (Enterprise plans)
+- **GitHub issues**: Report bugs at [github.com/babajidemm/aistudio](https://github.com/babajidemm/aistudio)
+
+<Note>
+Free plan users have access to documentation and community support. Pro and Enterprise plans include email support.
+</Note>
