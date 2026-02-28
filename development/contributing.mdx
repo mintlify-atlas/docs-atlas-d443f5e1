@@ -1,0 +1,594 @@
+---
+title: Contributing Guide
+description: How to contribute to AI Studio - from setup to pull request
+---
+
+## Welcome Contributors
+
+We love our contributors! AI Studio is an open-source real estate photo editing and video creation platform, and we welcome contributions of all kinds.
+
+<Card title="Ways to Contribute" icon="heart">
+  - Report bugs and issues
+  - Suggest new features
+  - Improve documentation
+  - Submit code improvements
+  - Add test coverage
+  - Share the project
+</Card>
+
+## Quick Start
+
+### Prerequisites
+
+- **Node.js**: v20+ (check with `node --version`)
+- **pnpm**: Package manager (install: `npm install -g pnpm`)
+- **Git**: Version control
+- **PostgreSQL**: Local database (or use Supabase)
+
+### Development Setup
+
+1. **Fork & Clone**
+
+```bash
+# Fork the repository on GitHub first
+git clone https://github.com/YOUR_USERNAME/proppi.git
+cd proppi
+```
+
+2. **Install Dependencies**
+
+```bash
+pnpm install
+```
+
+3. **Environment Setup**
+
+```bash
+cp .env.example .env.local
+```
+
+Update `.env.local` with your credentials:
+
+```env
+# Minimum required for development
+DATABASE_URL=postgresql://...
+BETTER_AUTH_SECRET=your_secret_min_32_chars
+BETTER_AUTH_URL=http://localhost:3000
+NEXT_PUBLIC_APP_URL=http://localhost:3000
+FAL_API_KEY=your_fal_api_key
+RESEND_API_KEY=your_resend_key
+TRIGGER_SECRET_KEY=tr_dev_your_key
+NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_SECRET_KEY=your_supabase_key
+```
+
+<Tip>
+Get free development API keys from:
+- [Fal.ai](https://fal.ai/dashboard/keys)
+- [Resend](https://resend.com/api-keys)
+- [Trigger.dev](https://cloud.trigger.dev)
+- [Supabase](https://supabase.com/dashboard)
+</Tip>
+
+4. **Database Setup**
+
+```bash
+pnpm db:push
+```
+
+This syncs the schema from `lib/db/schema.ts` to your database.
+
+5. **Start Development Servers**
+
+```bash
+# Terminal 1: Next.js dev server
+pnpm dev
+
+# Terminal 2: Trigger.dev for background jobs
+pnpm trigger
+```
+
+Visit `http://localhost:3000`
+
+<Warning>
+Both servers must run for full functionality. The Trigger.dev server handles AI image processing and video generation.
+</Warning>
+
+## Repository Structure
+
+Understanding the codebase organization:
+
+```
+proppi/
+├── app/                    # Next.js App Router
+│   ├── dashboard/          # Main project dashboard
+│   │   ├── page.tsx        # Projects grid/table view
+│   │   ├── [id]/           # Project detail pages
+│   │   └── settings/       # Workspace settings
+│   ├── admin/              # Admin panel
+│   │   ├── users/          # User management
+│   │   └── workspaces/     # Workspace oversight
+│   └── api/                # API routes
+│       ├── auth/           # Better Auth endpoints
+│       └── edit-photo/     # Image processing API
+├── components/             # React components
+│   ├── ui/                 # shadcn/ui primitives
+│   ├── dashboard/          # Dashboard components
+│   ├── projects/           # Project workflow
+│   ├── settings/           # Settings pages
+│   ├── admin/              # Admin components
+│   └── tables/             # Data tables
+├── lib/                    # Utilities & data access
+│   ├── db/                 # Database
+│   │   ├── schema.ts       # Drizzle schema
+│   │   └── index.ts        # DB client
+│   ├── actions/            # Server actions
+│   ├── auth.ts             # Better Auth config
+│   ├── style-templates.ts  # AI style definitions
+│   └── siteconfig.ts       # Site configuration
+├── hooks/                  # React hooks (use-*.ts)
+├── emails/                 # React Email templates
+├── trigger/                # Background jobs
+│   ├── process-image.ts    # AI image processing
+│   ├── inpaint-image.ts    # Image inpainting
+│   ├── video-orchestrator.ts  # Video workflow
+│   ├── generate-video-clip.ts # Video clips
+│   ├── generate-transition-clip.ts
+│   └── compile-video.ts    # Final video assembly
+├── public/                 # Static assets
+└── drizzle/                # Database migrations
+```
+
+### Key Files
+
+- **next.config.ts**: Next.js configuration, image domains
+- **drizzle.config.ts**: Database configuration
+- **trigger.config.ts**: Background job configuration
+- **eslint.config.mjs**: Linting rules
+- **package.json**: Dependencies and scripts
+- **AGENTS.md**: Repository guidelines for AI agents
+
+## Development Workflow
+
+### 1. Create a Branch
+
+```bash
+git checkout -b feature/your-feature-name
+# or
+git checkout -b fix/bug-description
+```
+
+### 2. Make Changes
+
+Follow the coding conventions:
+
+#### File Naming
+
+- **Components**: kebab-case (e.g., `project-detail-content.tsx`)
+- **Hooks**: `use-` prefix (e.g., `use-projects.ts`)
+- **Server Actions**: `*-actions.ts` (e.g., `project-actions.ts`)
+- **API Routes**: `route.ts` in directory matching endpoint
+
+#### Code Style
+
+- **TypeScript**: Prefer `.ts`/`.tsx` extensions
+- **React**: Functional components with hooks
+- **Styling**: Tailwind CSS utility classes
+- **Components**: Use existing shadcn/ui patterns
+- **Imports**: Absolute imports from root (configured in `tsconfig.json`)
+
+#### Example Component
+
+```typescript
+import { Button } from "@/components/ui/button";
+import { useProjects } from "@/hooks/use-projects";
+
+export function ProjectList() {
+  const { projects, isLoading } = useProjects();
+
+  if (isLoading) {
+    return <div>Loading...</div>;
+  }
+
+  return (
+    <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+      {projects.map((project) => (
+        <ProjectCard key={project.id} project={project} />
+      ))}
+    </div>
+  );
+}
+```
+
+### 3. Database Changes
+
+If modifying the schema:
+
+```bash
+# Edit lib/db/schema.ts
+
+# Generate migration
+pnpm db:generate
+
+# Apply to local database
+pnpm db:push
+
+# Or apply migration
+pnpm db:migrate
+
+# Inspect with Drizzle Studio
+pnpm db:studio
+```
+
+<Note>
+Include migration files in your PR when changing schema.
+</Note>
+
+### 4. Testing
+
+Before committing:
+
+```bash
+# Run linter
+pnpm lint
+
+# Build to check for errors
+pnpm build
+```
+
+Manual testing checklist:
+- [ ] Feature works in development (`pnpm dev`)
+- [ ] No console errors
+- [ ] Responsive on mobile/tablet/desktop
+- [ ] Works with background jobs (`pnpm trigger` running)
+- [ ] Database operations succeed
+- [ ] Email templates render (if changed)
+
+See [Testing Guide](/development/testing) for detailed testing instructions.
+
+### 5. Commit Changes
+
+Use [Conventional Commits](https://www.conventionalcommits.org/):
+
+```bash
+git add .
+git commit -m "feat: add video transition effects"
+```
+
+**Commit Types:**
+- `feat:` New feature
+- `fix:` Bug fix
+- `docs:` Documentation only
+- `style:` Code style (formatting, no logic change)
+- `refactor:` Code refactoring
+- `perf:` Performance improvement
+- `test:` Adding tests
+- `chore:` Maintenance (deps, config)
+
+**Examples:**
+```bash
+feat: add luxury estate style template
+fix: handle upload errors gracefully
+docs: update deployment guide
+refactor: extract video processing logic
+```
+
+### 6. Push & Create PR
+
+```bash
+git push origin feature/your-feature-name
+```
+
+Go to GitHub and create a Pull Request.
+
+## Pull Request Guidelines
+
+### PR Template
+
+```markdown
+## Description
+Brief description of changes and motivation.
+
+## Type of Change
+- [ ] Bug fix (non-breaking)
+- [ ] New feature (non-breaking)
+- [ ] Breaking change (fix/feature causing existing functionality to change)
+- [ ] Documentation update
+
+## Changes Made
+- Specific change 1
+- Specific change 2
+- Specific change 3
+
+## Verification Steps
+1. Start development servers:
+   ```bash
+   pnpm dev
+   pnpm trigger
+   ```
+2. Navigate to `/dashboard`
+3. Test feature X by doing Y
+4. Verify Z appears correctly
+
+## Screenshots/Videos
+[Add for UI changes]
+
+## Database Changes
+- [ ] Schema changes included
+- [ ] Migration files added
+- [ ] New environment variables documented
+
+## Checklist
+- [ ] Code follows project style guidelines
+- [ ] Ran `pnpm lint` with no errors
+- [ ] Tested locally
+- [ ] Updated documentation (if needed)
+- [ ] PR title follows Conventional Commits
+```
+
+### PR Best Practices
+
+1. **Keep PRs focused**: One feature/fix per PR
+2. **Write descriptive titles**: Follow Conventional Commits
+3. **Add screenshots/videos**: For UI changes
+4. **Link issues**: Reference related issues (#123)
+5. **Request reviews**: Tag relevant maintainers
+6. **Respond to feedback**: Address review comments promptly
+7. **Keep updated**: Rebase on main if needed
+
+## Coding Conventions
+
+### TypeScript
+
+- **Types**: Define interfaces for props and data
+- **Strict mode**: Enabled in `tsconfig.json`
+- **No `any`**: Use proper typing or `unknown`
+- **Null safety**: Handle `null`/`undefined` explicitly
+
+```typescript
+// Good
+interface ProjectCardProps {
+  project: Project;
+  onDelete?: (id: string) => void;
+}
+
+export function ProjectCard({ project, onDelete }: ProjectCardProps) {
+  // ...
+}
+
+// Bad
+export function ProjectCard(props: any) {
+  // ...
+}
+```
+
+### React
+
+- **Server Components**: Default in App Router
+- **Client Components**: Use `"use client"` only when needed
+- **Hooks**: Follow React rules of hooks
+- **Key props**: Required for lists
+- **Accessibility**: Use semantic HTML and ARIA labels
+
+```typescript
+"use client";
+
+import { useState } from "react";
+
+export function InteractiveButton() {
+  const [count, setCount] = useState(0);
+
+  return (
+    <button
+      onClick={() => setCount(count + 1)}
+      aria-label="Increment counter"
+    >
+      Clicked {count} times
+    </button>
+  );
+}
+```
+
+### Tailwind CSS
+
+- **Utility classes**: Prefer utilities over custom CSS
+- **Responsive**: Mobile-first design
+- **Dark mode**: Support via `dark:` prefix
+- **shadcn/ui**: Use existing components from `components/ui/`
+
+```typescript
+<div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+  <Card className="p-6 hover:shadow-lg transition-shadow">
+    <h2 className="text-xl font-semibold dark:text-white">
+      Project Title
+    </h2>
+  </Card>
+</div>
+```
+
+### Database (Drizzle ORM)
+
+- **Schema**: Define in `lib/db/schema.ts`
+- **Relations**: Use Drizzle relations for joins
+- **Transactions**: Wrap related operations
+- **Migrations**: Generate and commit
+
+```typescript
+import { pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+
+export const projects = pgTable("project", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  name: text("name").notNull(),
+  workspaceId: uuid("workspace_id").references(() => workspaces.id),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+```
+
+## Common Tasks
+
+### Adding a New Page
+
+1. Create route in `app/` directory:
+
+```typescript
+// app/new-page/page.tsx
+export default function NewPage() {
+  return (
+    <div>
+      <h1>New Page</h1>
+    </div>
+  );
+}
+```
+
+2. Update navigation in `components/dashboard/sidebar.tsx` (if needed)
+
+### Adding a UI Component
+
+1. Use shadcn/ui CLI:
+
+```bash
+pnpx shadcn@latest add button
+```
+
+2. Or create custom component:
+
+```typescript
+// components/custom/my-component.tsx
+import { cn } from "@/lib/utils";
+
+interface MyComponentProps {
+  className?: string;
+  children: React.ReactNode;
+}
+
+export function MyComponent({ className, children }: MyComponentProps) {
+  return (
+    <div className={cn("my-component", className)}>
+      {children}
+    </div>
+  );
+}
+```
+
+### Adding a Server Action
+
+```typescript
+// lib/actions/project-actions.ts
+"use server";
+
+import { db } from "@/lib/db";
+import { projects } from "@/lib/db/schema";
+
+export async function createProject(name: string, workspaceId: string) {
+  const [project] = await db
+    .insert(projects)
+    .values({ name, workspaceId })
+    .returning();
+
+  return project;
+}
+```
+
+Use in component:
+
+```typescript
+"use client";
+
+import { createProject } from "@/lib/actions/project-actions";
+
+export function CreateProjectForm() {
+  async function handleSubmit(formData: FormData) {
+    const name = formData.get("name") as string;
+    await createProject(name, workspaceId);
+  }
+
+  return <form action={handleSubmit}>...</form>;
+}
+```
+
+### Adding a Trigger.dev Job
+
+```typescript
+// trigger/my-task.ts
+import { task } from "@trigger.dev/sdk/v3";
+
+export const myTask = task({
+  id: "my-task",
+  run: async (payload: { data: string }) => {
+    // Background processing logic
+    console.log("Processing:", payload.data);
+
+    return { success: true };
+  },
+});
+```
+
+Trigger from API route:
+
+```typescript
+import { myTask } from "@/trigger/my-task";
+import { tasks } from "@trigger.dev/sdk/v3";
+
+export async function POST(request: Request) {
+  const body = await request.json();
+
+  const handle = await tasks.trigger("my-task", body);
+
+  return Response.json({ id: handle.id });
+}
+```
+
+### Adding a Style Template
+
+```typescript
+// lib/style-templates.ts
+export const styleTemplates = [
+  {
+    id: "luxury",
+    name: "Luxury Estate",
+    description: "High-end, sophisticated presentation",
+    prompt: "Luxury real estate photography, dramatic lighting, ...",
+    thumbnail: "/templates/luxury.jpg",
+  },
+  // Add your template here
+];
+```
+
+## Getting Help
+
+- **GitHub Discussions**: Ask questions, share ideas
+- **GitHub Issues**: Report bugs, request features
+- **README.md**: Project overview and quick start
+- **AGENTS.md**: Repository guidelines for AI agents
+
+## Code of Conduct
+
+Be respectful and constructive:
+
+- Welcome newcomers
+- Provide helpful feedback
+- Assume good intentions
+- Focus on solutions
+- Respect different perspectives
+
+## License
+
+By contributing, you agree that your contributions will be licensed under the [GNU Affero General Public License v3.0](https://github.com/codehagen/proppi/blob/main/LICENSE.md).
+
+## Recognition
+
+All contributors are recognized in:
+- GitHub Contributors graph
+- README.md contributors section
+
+<img src="https://contrib.rocks/image?repo=codehagen/proppi" alt="Contributors" />
+
+Thank you for contributing to AI Studio!
+
+## Next Steps
+
+- [Testing Guide](/development/testing) - Learn the testing approach
+- [Deployment Guide](/development/deployment) - Deploy your changes
+- [Architecture Overview](/getting-started/architecture) - Deep dive into the system
+- [API Reference](/api-reference/overview) - Explore the API

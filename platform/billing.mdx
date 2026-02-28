@@ -1,0 +1,436 @@
+---
+title: "Billing & Payments"
+description: "Payment processing with Stripe and Norwegian invoice system integration"
+---
+
+## Overview
+
+AI Studio supports two payment methods:
+
+1. **Stripe** - Credit card payments for international customers ($99 USD)
+2. **Invoice** - B2B invoicing for Norwegian businesses (1000 NOK)
+
+All billing logic is in `lib/actions/payments.ts`.
+
+## Payment Methods
+
+### Stripe Integration
+
+Stripe handles credit card payments with automatic processing.
+
+#### Configuration
+
+Set up in `lib/stripe.ts`:
+
+```typescript
+export const STRIPE_CONFIG = {
+  PRICE_PROJECT_USD: process.env.STRIPE_PRICE_PROJECT_USD || "price_1Sne...",
+  PROJECT_PRICE_USD_CENTS: 9900,  // $99 USD
+  PROJECT_PRICE_NOK_ORE: 100_000, // 1000 NOK
+};
+```
+
+#### Environment Variables
+
+Required in `.env.local`:
+
+```bash
+# Stripe secret key for API access
+STRIPE_SECRET_KEY=sk_live_...
+
+# Stripe product price ID (created via Stripe dashboard)
+STRIPE_PRICE_PROJECT_USD=price_1Sne...
+
+# Webhook secret for event verification
+STRIPE_WEBHOOK_SECRET=whsec_...
+```
+
+### Invoice Billing (Norwegian B2B)
+
+Norwegian businesses can pay via invoice through Fiken accounting integration.
+
+#### Eligibility Requirements
+
+From `lib/actions/payments.ts:89`:
+
+```typescript
+export async function canUseInvoiceBilling(
+  workspaceId: string
+): Promise<{ eligible: boolean; reason?: string }> {
+  const workspaceData = await getWorkspaceById(workspaceId);
+  
+  // Must have Norwegian organization number
+  if (!workspaceData.organizationNumber) {
+    return { eligible: false, reason: "No organization number" };
+  }
+  
+  // Must be approved by admin
+  if (!workspaceData.invoiceEligible) {
+    return { eligible: false, reason: "Not approved for invoicing" };
+  }
+  
+  return { eligible: true };
+}
+```
+
+<Steps>
+  <Step title="Customer Adds Org Number">
+    Customer enters 9-digit Norwegian organization number in workspace settings.
+  </Step>
+  
+  <Step title="Admin Approves">
+    System admin reviews and enables invoice eligibility at `/admin/workspaces/[id]`.
+  </Step>
+  
+  <Step title="Invoice Access Granted">
+    Customer can now process projects immediately, billed monthly.
+  </Step>
+</Steps>
+
+## Payment Flow
+
+### Stripe Checkout Flow
+
+<Steps>
+  <Step title="Create Checkout Session">
+    User clicks "Pay with Card" button, triggering `createStripeCheckoutSession(projectId)`:
+    
+    ```typescript
+    const checkoutSession = await stripe.checkout.sessions.create({
+      customer: stripeCustomerId,
+      mode: "payment",
+      payment_intent_data: {
+        setup_future_usage: "off_session", // Save card for future use
+      },
+      line_items: [
+        { price: STRIPE_CONFIG.PRICE_PROJECT_USD, quantity: 1 }
+      ],
+      success_url: `${baseUrl}/dashboard/${projectId}?payment=success`,
+      cancel_url: `${baseUrl}/dashboard/${projectId}?payment=cancelled`,
+    });
+    ```
+  </Step>
+  
+  <Step title="Payment Record Created">
+    System creates a `project_payment` record with status `pending`:
+    
+    ```typescript
+    await db.insert(projectPayment).values({
+      id: nanoid(),
+      projectId,
+      workspaceId,
+      paymentMethod: "stripe",
+      stripeCheckoutSessionId: checkoutSession.id,
+      amountCents: 9900,
+      currency: "usd",
+      status: "pending",
+    });
+    ```
+  </Step>
+  
+  <Step title="User Completes Payment">
+    User is redirected to Stripe Checkout hosted page and enters payment details.
+  </Step>
+  
+  <Step title="Webhook Updates Status">
+    Stripe webhook at `/api/webhooks/stripe/route.ts` receives `checkout.session.completed` event and calls `handleStripePaymentSuccess()`:
+    
+    ```typescript
+    await db.update(projectPayment)
+      .set({
+        status: "completed",
+        stripePaymentIntentId: paymentIntentId,
+        paidAt: new Date(),
+      })
+      .where(eq(projectPayment.id, payment.id));
+    ```
+  </Step>
+  
+  <Step title="AI Processing Starts">
+    Project status changes to `processing` and AI generation begins.
+  </Step>
+</Steps>
+
+### Invoice Payment Flow
+
+<Steps>
+  <Step title="Create Invoice Line Item">
+    User clicks "Process Project" (invoice customers), system calls `createInvoicePayment(projectId)`:
+    
+    ```typescript
+    const lineItemResult = await createProjectInvoiceLineItemAction(
+      workspaceId,
+      projectId,
+      projectName
+    );
+    ```
+  </Step>
+  
+  <Step title="Immediate Processing">
+    Payment marked as `completed` immediately (invoice customers pay later):
+    
+    ```typescript
+    await db.insert(projectPayment).values({
+      paymentMethod: "invoice",
+      invoiceLineItemId: lineItemResult.data.id,
+      amountCents: 100_000, // 1000 NOK in øre
+      currency: "nok",
+      status: "completed",
+      paidAt: new Date(),
+    });
+    ```
+  </Step>
+  
+  <Step title="Line Item Pending">
+    Invoice line item created with status `pending` until included in monthly invoice.
+  </Step>
+  
+  <Step title="Monthly Invoice Generation">
+    Admin generates invoice at `/admin/billing`, line item status changes to `invoiced`.
+  </Step>
+</Steps>
+
+## Database Schema
+
+### Stripe Customer
+
+Links workspace to Stripe customer ID:
+
+```typescript
+export const stripeCustomer = pgTable("stripe_customer", {
+  id: text("id").primaryKey(),
+  workspaceId: text("workspace_id").notNull().unique(),
+  stripeCustomerId: text("stripe_customer_id").notNull(), // cus_xxx
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+```
+
+### Project Payment
+
+Tracks payment for each project:
+
+```typescript
+export const projectPayment = pgTable("project_payment", {
+  id: text("id").primaryKey(),
+  projectId: text("project_id").notNull().unique(),
+  workspaceId: text("workspace_id").notNull(),
+  
+  // Payment method: 'stripe' | 'invoice' | 'free'
+  paymentMethod: text("payment_method").notNull(),
+  
+  // Stripe fields
+  stripeCheckoutSessionId: text("stripe_checkout_session_id"),
+  stripePaymentIntentId: text("stripe_payment_intent_id"),
+  
+  // Invoice fields
+  invoiceLineItemId: text("invoice_line_item_id"),
+  
+  // Amounts
+  amountCents: integer("amount_cents").notNull(),
+  currency: text("currency").notNull(), // 'usd' | 'nok'
+  
+  // Status: 'pending' | 'completed' | 'failed' | 'refunded'
+  status: text("status").notNull().default("pending"),
+  paidAt: timestamp("paid_at"),
+});
+```
+
+### Invoice Line Item
+
+Billable items for Norwegian invoices:
+
+```typescript
+export const invoiceLineItem = pgTable("invoice_line_item", {
+  id: text("id").primaryKey(),
+  workspaceId: text("workspace_id").notNull(),
+  projectId: text("project_id"),
+  videoProjectId: text("video_project_id"),
+  
+  description: text("description").notNull(),
+  amountOre: integer("amount_ore").notNull(), // Amount in øre
+  quantity: integer("quantity").notNull().default(1),
+  
+  // Status: 'pending' | 'invoiced' | 'cancelled'
+  status: text("status").notNull().default("pending"),
+  invoiceId: text("invoice_id"), // Set when included in invoice
+});
+```
+
+### Invoice
+
+Groups line items for monthly billing:
+
+```typescript
+export const invoice = pgTable("invoice", {
+  id: text("id").primaryKey(),
+  workspaceId: text("workspace_id").notNull(),
+  
+  // Fiken integration (Norwegian accounting)
+  fikenInvoiceId: integer("fiken_invoice_id"),
+  fikenInvoiceNumber: text("fiken_invoice_number"),
+  
+  totalAmountOre: integer("total_amount_ore").notNull(),
+  currency: text("currency").notNull().default("NOK"),
+  
+  // Status: 'draft' | 'sent' | 'paid' | 'cancelled' | 'overdue'
+  status: text("status").notNull().default("draft"),
+  
+  issueDate: timestamp("issue_date"),
+  dueDate: timestamp("due_date"),
+  paidAt: timestamp("paid_at"),
+});
+```
+
+## Saved Payment Methods
+
+### Saving Cards
+
+Stripe checkout automatically saves payment methods when `setup_future_usage: "off_session"` is set:
+
+```typescript
+payment_intent_data: {
+  setup_future_usage: "off_session", // Save card for future payments
+}
+```
+
+### Charging Saved Cards
+
+Use saved payment method for subsequent projects:
+
+```typescript
+export async function chargeWithSavedPaymentMethod(
+  projectId: string,
+  paymentMethodId: string
+): Promise<ActionResult<{ status: string; paymentIntentId: string }>> {
+  const paymentIntent = await stripe.paymentIntents.create({
+    amount: STRIPE_CONFIG.PROJECT_PRICE_USD_CENTS,
+    currency: "usd",
+    customer: stripeCustomerId,
+    payment_method: paymentMethodId,
+    off_session: true,  // Charge without customer present
+    confirm: true,      // Charge immediately
+  });
+}
+```
+
+### Listing Payment Methods
+
+Retrieve customer's saved cards:
+
+```typescript
+const paymentMethods = await stripe.paymentMethods.list({
+  customer: stripeCustomerId,
+  type: "card",
+});
+```
+
+## Admin Billing Panel
+
+### Accessing Billing Admin
+
+Navigate to `/admin/billing` (requires system admin).
+
+Implemented in `app/admin/billing/page.tsx:11`:
+
+```typescript
+export default async function AdminBillingPage() {
+  await requireSystemAdmin();
+  
+  const [stats, uninvoicedItems, invoices] = await Promise.all([
+    getBillingStats(),
+    getUninvoicedLineItems(),
+    getInvoiceHistory(),
+  ]);
+}
+```
+
+### Billing Stats
+
+Real-time metrics displayed:
+
+- **Uninvoiced Count**: Projects completed but not yet invoiced
+- **Uninvoiced Amount**: Total pending revenue in NOK
+- **Pending Payment**: Stripe payments awaiting confirmation
+- **Invoiced This Month**: Invoices generated in current period
+- **Total Revenue**: All-time invoiced amount
+
+### Managing Invoices
+
+Two tabs in the billing panel:
+
+1. **Uninvoiced** - Line items awaiting invoice generation
+2. **History** - Previously generated invoices with Fiken integration
+
+<Warning>
+Invoice generation creates records in Fiken accounting system. Test thoroughly in development before generating production invoices.
+</Warning>
+
+## Fiken Integration (Optional)
+
+Norwegian accounting system integration.
+
+### Environment Variables
+
+```bash
+# Fiken API credentials
+FIKEN_API_KEY=your_fiken_api_key_here
+FIKEN_COMPANY_SLUG=your-company-slug
+```
+
+### Cached Fiken Contact
+
+Workspace pricing stores Fiken contact ID for faster invoice creation:
+
+```typescript
+export const workspacePricing = pgTable("workspace_pricing", {
+  fikenContactId: integer("fiken_contact_id"),
+});
+```
+
+## Enabling Invoice Eligibility
+
+Admin action to approve workspace for invoice billing:
+
+```typescript
+export async function setWorkspaceInvoiceEligibility(
+  workspaceId: string,
+  eligible: boolean
+): Promise<ActionResult<{ success: boolean }>> {
+  await db.update(workspace)
+    .set({
+      invoiceEligible: eligible,
+      invoiceEligibleAt: eligible ? new Date() : null,
+    })
+    .where(eq(workspace.id, workspaceId));
+}
+```
+
+Triggered from workspace detail page: `/admin/workspaces/[id]`
+
+## Billing Portal
+
+Stripe customer portal for managing payment methods:
+
+```typescript
+export async function createBillingPortalSession(): Promise<
+  ActionResult<{ url: string }>
+> {
+  const portalSession = await stripe.billingPortal.sessions.create({
+    customer: stripeCustomerId,
+    return_url: `${getBaseUrl()}/dashboard/settings`,
+  });
+  
+  return { success: true, data: { url: portalSession.url } };
+}
+```
+
+Customers can:
+- Update payment methods
+- View payment history
+- Download receipts
+
+## Related Topics
+
+- [Pricing & Plans](/platform/pricing) - Plan tiers and pricing structure
+- [Admin Panel](/platform/admin-panel) - Managing billing and invoices
+- [API Reference](/api-reference/payments) - Payment endpoints

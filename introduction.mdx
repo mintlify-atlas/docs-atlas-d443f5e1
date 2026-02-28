@@ -1,0 +1,135 @@
+---
+title: Welcome to AI Studio
+description: Transform property photos with AI-powered editing and create stunning real estate marketing videos
+---
+
+<img
+  src="/images/hero-light.png"
+  alt="AI Studio Dashboard"
+  className="rounded-lg border shadow-lg"
+/>
+
+## What is AI Studio?
+
+AI Studio is an AI-powered real estate photo editing and video creation platform designed for real estate professionals. Upload property photos, apply professional style templates, and generate marketing-ready visuals in seconds.
+
+The platform combines cutting-edge AI technology with an intuitive workflow, allowing you to:
+
+- **Transform photos** with AI-powered style templates
+- **Create property videos** with automated transitions and music
+- **Collaborate with teams** in shared workspaces
+- **Manage projects** from dashboard to delivery
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Get up and running in minutes. Sign up, create your first project, and generate AI-enhanced images.
+  </Card>
+  <Card title="Key concepts" icon="lightbulb" href="/key-concepts">
+    Understand workspaces, projects, style templates, and how AI Studio organizes your work.
+  </Card>
+  <Card title="Photo editing" icon="image" href="/features/photo-editing">
+    Learn how to upload images, select styles, and transform property photos with AI.
+  </Card>
+  <Card title="Video creation" icon="video" href="/features/video-creation">
+    Create professional property tour videos with AI-generated clips and transitions.
+  </Card>
+</CardGroup>
+
+## Core features
+
+### AI photo enhancement
+
+Upload property photos and apply professionally curated style templates. The platform uses Fal.ai's image generation models to transform your images while preserving architectural elements like windows, walls, and doors.
+
+**Available style categories:**
+- **Staging** - Modern, Scandinavian, and minimalist interior designs
+- **Lighting** - Enhanced natural and ambient lighting (coming soon)
+- **Exterior** - Curb appeal and landscape improvements (coming soon)
+- **Atmosphere** - Seasonal and mood-based transformations (coming soon)
+
+### Video project creation
+
+Create property tour videos by combining your enhanced images into 5-second clips with smooth transitions:
+
+- **Aspect ratios**: 16:9 (landscape), 9:16 (portrait), or 1:1 (square)
+- **Music tracks**: Pre-curated royalty-free background music
+- **AI motion**: Kling AI generates dynamic camera movements
+- **Transitions**: Seamless blends or clean cuts between clips
+
+### Team workspaces
+
+Organize your work in collaborative workspaces:
+
+- **Role-based access**: Owner, admin, and member permissions
+- **Shared projects**: All team members access the same projects
+- **Team invitations**: Invite members via email
+- **White-label branding**: Custom logo and colors for agencies
+
+### Project management
+
+Track all your photo and video projects in one dashboard:
+
+- **Grid and table views** for easy navigation
+- **Status tracking**: pending, processing, completed, or failed
+- **Before/after comparisons** for image projects
+- **Batch operations** across multiple images
+
+## How it works
+
+<Steps>
+  <Step title="Sign up and onboard">
+    Create your account, set up your workspace, and complete the onboarding form with your organization details.
+  </Step>
+  <Step title="Create a project">
+    Click "New Project" in the dashboard, upload your property photos, and select a style template.
+  </Step>
+  <Step title="AI processing">
+    The platform sends your images to Fal.ai for AI enhancement. Processing typically takes 30-60 seconds per image.
+  </Step>
+  <Step title="Review and download">
+    View your enhanced images in the project detail page. Download individual images or the entire project as a ZIP file.
+  </Step>
+</Steps>
+
+<Note>
+  AI Studio preserves architectural elements during photo enhancement. Windows, walls, doors, and room layouts remain exactly as shown in your original images.
+</Note>
+
+## Tech stack
+
+AI Studio is built with modern web technologies:
+
+- **Next.js 16** - React framework with App Router and Server Actions
+- **PostgreSQL + Drizzle ORM** - Type-safe database operations
+- **Fal.ai** - AI-powered image generation and editing
+- **Kling AI** - Video clip generation with motion
+- **Trigger.dev** - Background job processing
+- **Better Auth** - Authentication with OAuth providers
+- **Supabase** - File storage and database hosting
+- **Tailwind CSS v4** - Utility-first styling
+
+## Supported room types
+
+The AI understands context for different room types:
+
+<AccordionGroup>
+  <Accordion title="Interior spaces">
+    Living room, bedroom, kitchen, bathroom, dining room, office, hallway, toilet, laundry room, storage room, walk-in closet, sauna, gym, children's room, pool area, TV room, library, hobby room, utility room, pantry, conservatory
+  </Accordion>
+  <Accordion title="Exterior spaces">
+    Garage, terrace, garden, landscape, exterior facade
+  </Accordion>
+</AccordionGroup>
+
+When you specify a room type, the AI tailors its enhancements to match typical design patterns for that space.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Quickstart guide" icon="play" href="/quickstart">
+    Follow the step-by-step tutorial to create your first AI-enhanced project.
+  </Card>
+  <Card title="Understanding workspaces" icon="building" href="/key-concepts#workspaces">
+    Learn how workspaces organize teams, projects, and billing.
+  </Card>
+</CardGroup>

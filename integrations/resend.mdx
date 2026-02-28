@@ -1,0 +1,438 @@
+---
+title: Resend Integration
+description: Transactional email delivery for notifications and invites
+---
+
+## Overview
+
+Resend provides email delivery for AI Studio's transactional emails:
+
+- Welcome emails for new users
+- Workspace invitation emails
+- Email verification links
+- Password reset emails
+
+All emails are built using [React Email](https://react.email) for beautiful, responsive templates.
+
+## Configuration
+
+### Environment Variables
+
+Add the following to your `.env.local` file:
+
+```bash
+# Get your API key from: https://resend.com/api-keys
+# Used for sending transactional emails (invitations, notifications)
+RESEND_API_KEY=re_your_resend_api_key_here
+```
+
+### Setup Steps
+
+<Steps>
+  <Step title="Create Resend Account">
+    1. Sign up at [resend.com](https://resend.com)
+    2. Verify your email address
+    3. Complete account setup
+  </Step>
+
+  <Step title="Get API Key">
+    1. Go to [API Keys](https://resend.com/api-keys)
+    2. Click **Create API Key**
+    3. Name: "AI Studio Production" (or "Development")
+    4. Permission: **Sending access**
+    5. Copy the API key (starts with `re_`)
+    6. Add to `.env.local` as `RESEND_API_KEY`
+
+    <Warning>
+      API keys are shown only once. Save it immediately or generate a new one.
+    </Warning>
+  </Step>
+
+  <Step title="Add Domain (Production)">
+    For production, add and verify your domain:
+
+    1. Go to [Domains](https://resend.com/domains)
+    2. Click **Add Domain**
+    3. Enter your domain (e.g., `yourdomain.com`)
+    4. Add the provided DNS records to your domain:
+       - SPF record
+       - DKIM record
+       - DMARC record (optional but recommended)
+    5. Wait for verification (usually takes a few minutes)
+
+    <Note>
+      For testing, you can send emails from `onboarding@resend.dev` without domain verification.
+    </Note>
+  </Step>
+
+  <Step title="Configure Sender Email">
+    Update your site configuration with the sender email:
+
+    ```typescript lib/siteconfig.ts
+    export const siteConfig = {
+      name: "AI Studio",
+      email: {
+        from: "AI Studio <noreply@yourdomain.com>",
+        // For testing: "AI Studio <onboarding@resend.dev>"
+      },
+    };
+    ```
+  </Step>
+</Steps>
+
+## Email Client
+
+The Resend client is configured in `lib/email.ts`:
+
+```typescript lib/email.ts
+import { Resend } from "resend";
+import { siteConfig } from "./siteconfig";
+
+const resend = new Resend(process.env.RESEND_API_KEY);
+
+export async function sendWelcomeEmail(to: string, name: string) {
+  const { data, error } = await resend.emails.send({
+    from: siteConfig.email.from,
+    to,
+    subject: `Welcome to ${siteConfig.name}!`,
+    react: WelcomeEmail({ name }),
+  });
+
+  if (error) {
+    console.error("Failed to send welcome email:", error);
+    throw new Error(`Failed to send welcome email: ${error.message}`);
+  }
+
+  return data;
+}
+```
+
+## Email Functions
+
+AI Studio includes 4 pre-built email functions:
+
+### Welcome Email
+
+Sent when a user signs up:
+
+```typescript
+import { sendWelcomeEmail } from "@/lib/email";
+
+await sendWelcomeEmail(
+  "user@example.com",
+  "John Doe"
+);
+```
+
+**Template:** `emails/welcome-email.tsx`
+
+### Invite Email
+
+Sent when inviting users to a workspace:
+
+```typescript
+import { sendInviteEmail } from "@/lib/email";
+
+await sendInviteEmail(
+  "invitee@example.com",
+  "John Doe", // Inviter name
+  "Acme Real Estate", // Workspace name
+  "https://app.com/invite/abc123" // Invite link
+);
+```
+
+**Template:** `emails/invite-email.tsx`
+
+### Verification Email
+
+Sent for email verification:
+
+```typescript
+import { sendVerificationEmail } from "@/lib/email";
+
+await sendVerificationEmail(
+  "user@example.com",
+  "John Doe",
+  "https://app.com/verify/abc123" // Verification link
+);
+```
+
+**Template:** `emails/verify-email.tsx`
+
+### Password Reset Email
+
+Sent when requesting a password reset:
+
+```typescript
+import { sendPasswordResetEmail } from "@/lib/email";
+
+await sendPasswordResetEmail(
+  "user@example.com",
+  "John Doe",
+  "https://app.com/reset-password/abc123" // Reset link
+);
+```
+
+**Template:** `emails/reset-password-email.tsx`
+
+## Email Templates
+
+All email templates are built with React Email and stored in the `emails/` directory.
+
+### Example Template Structure
+
+```tsx emails/welcome-email.tsx
+import {
+  Body,
+  Container,
+  Head,
+  Heading,
+  Html,
+  Link,
+  Preview,
+  Text,
+} from "@react-email/components";
+
+interface WelcomeEmailProps {
+  name: string;
+}
+
+export function WelcomeEmail({ name }: WelcomeEmailProps) {
+  return (
+    <Html>
+      <Head />
+      <Preview>Welcome to AI Studio!</Preview>
+      <Body style={main}>
+        <Container style={container}>
+          <Heading style={h1}>Welcome to AI Studio, {name}!</Heading>
+          <Text style={text}>
+            We're excited to have you on board. Start creating stunning
+            real estate photos and videos with AI.
+          </Text>
+          <Link href="https://app.aistudio.com/dashboard" style={button}>
+            Get Started
+          </Link>
+        </Container>
+      </Body>
+    </Html>
+  );
+}
+
+const main = {
+  backgroundColor: "#f6f9fc",
+  fontFamily: '-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif',
+};
+
+const container = {
+  backgroundColor: "#ffffff",
+  margin: "0 auto",
+  padding: "20px 0 48px",
+  marginBottom: "64px",
+};
+
+const h1 = {
+  color: "#333",
+  fontSize: "24px",
+  fontWeight: "bold",
+  margin: "40px 0",
+  padding: "0",
+};
+
+const text = {
+  color: "#333",
+  fontSize: "16px",
+  lineHeight: "26px",
+};
+
+const button = {
+  backgroundColor: "#5469d4",
+  borderRadius: "4px",
+  color: "#fff",
+  fontSize: "16px",
+  textDecoration: "none",
+  textAlign: "center" as const,
+  display: "block",
+  width: "200px",
+  padding: "12px",
+};
+```
+
+### Preview Emails Locally
+
+Use React Email's dev server to preview templates:
+
+```bash
+pnpm email
+```
+
+This opens a browser at `http://localhost:3001` showing all email templates with hot reload.
+
+## Usage Examples
+
+### In Server Actions
+
+```typescript lib/actions/auth.ts
+"use server";
+
+import { sendWelcomeEmail } from "@/lib/email";
+import { db } from "@/lib/db";
+
+export async function createUser(email: string, name: string) {
+  // Create user in database
+  const user = await db.insert(users).values({ email, name });
+
+  // Send welcome email
+  try {
+    await sendWelcomeEmail(email, name);
+  } catch (error) {
+    console.error("Failed to send welcome email:", error);
+    // Don't fail user creation if email fails
+  }
+
+  return user;
+}
+```
+
+### In API Routes
+
+```typescript app/api/invite/route.ts
+import { sendInviteEmail } from "@/lib/email";
+import { auth } from "@/lib/auth";
+
+export async function POST(request: Request) {
+  const session = await auth();
+  if (!session?.user) {
+    return Response.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const { email, workspaceName, inviteUrl } = await request.json();
+
+  try {
+    await sendInviteEmail(
+      email,
+      session.user.name,
+      workspaceName,
+      inviteUrl
+    );
+
+    return Response.json({ success: true });
+  } catch (error) {
+    console.error("Failed to send invite:", error);
+    return Response.json(
+      { error: "Failed to send invite" },
+      { status: 500 }
+    )
+  }
+}
+```
+
+## Error Handling
+
+All email functions throw errors on failure:
+
+```typescript
+try {
+  await sendWelcomeEmail(email, name);
+} catch (error) {
+  if (error.message.includes("Invalid API key")) {
+    // Handle invalid API key
+  } else if (error.message.includes("Invalid email")) {
+    // Handle invalid email address
+  } else {
+    // Handle other errors
+  }
+  
+  console.error("Email error:", error);
+}
+```
+
+## Best Practices
+
+1. **Don't block user actions** - Send emails asynchronously
+2. **Handle failures gracefully** - Don't fail user operations if email fails
+3. **Use try-catch** - Always wrap email calls in error handling
+4. **Test templates** - Use `pnpm email` to preview before deploying
+5. **Monitor delivery** - Check Resend dashboard for delivery status
+
+## Rate Limits
+
+Resend has the following rate limits:
+
+**Free Tier:**
+- 100 emails/day
+- 3,000 emails/month
+- No domain verification required for testing
+
+**Paid Tier:**
+- 50,000+ emails/month
+- Custom sending limits
+- Domain verification required
+- Better deliverability
+
+## Monitoring
+
+### Resend Dashboard
+
+Monitor email delivery in the [Resend dashboard](https://resend.com/emails):
+
+- Delivery status (sent, delivered, bounced)
+- Open rates and click rates
+- Bounce and complaint tracking
+- Email logs and debugging
+
+### Webhooks (Optional)
+
+Set up webhooks to track email events:
+
+```typescript app/api/webhooks/resend/route.ts
+export async function POST(request: Request) {
+  const event = await request.json();
+
+  switch (event.type) {
+    case "email.sent":
+      console.log("Email sent:", event.data.email_id);
+      break;
+    case "email.delivered":
+      console.log("Email delivered:", event.data.email_id);
+      break;
+    case "email.bounced":
+      console.error("Email bounced:", event.data.email_id);
+      break;
+    default:
+      console.log("Unknown event:", event.type);
+  }
+
+  return Response.json({ received: true });
+}
+```
+
+## Testing
+
+### Development Mode
+
+For testing, use Resend's default sender:
+
+```typescript
+from: "AI Studio <onboarding@resend.dev>"
+```
+
+This works without domain verification.
+
+### Test Recipients
+
+Send test emails to your own address:
+
+```typescript
+// Override in development
+const recipient = process.env.NODE_ENV === "development"
+  ? "your-test@email.com"
+  : actualRecipient;
+```
+
+## Resources
+
+- [Resend Documentation](https://resend.com/docs)
+- [React Email Documentation](https://react.email/docs)
+- [API Reference](https://resend.com/docs/api-reference/introduction)
+- [Dashboard](https://resend.com/emails)
+- [Email Templates](https://react.email/examples)

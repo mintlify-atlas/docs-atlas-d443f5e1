@@ -1,0 +1,536 @@
+---
+title: 'Photo Editing'
+description: 'Transform real estate photos with AI-powered editing using style templates and room-specific enhancements'
+icon: 'image'
+---
+
+## Overview
+
+AI Studio's photo editing feature uses advanced AI models to transform real estate photos with intelligent style transfers, virtual staging, and automated enhancements. The system preserves architectural elements while applying sophisticated design transformations.
+
+## Creating a Project
+
+Every photo editing workflow starts with creating a project. Projects group related images together and apply consistent styling across all photos.
+
+<Steps>
+  <Step title="Start a New Project">
+    From the dashboard, click the **New Project** button. You'll be prompted to configure your project settings.
+    
+    ```tsx
+    // Dashboard renders project creation dialog
+    // Source: app/dashboard/page.tsx
+    const projects = await getProjects(data.workspace.id);
+    const stats = await getProjectStats(data.workspace.id);
+    
+    return (
+      <DashboardContent projects={projects} stats={stats} />
+    );
+    ```
+  </Step>
+  
+  <Step title="Select a Style Template">
+    Choose from available style templates. Each template includes:
+    - **Style Category**: Staging, lighting, exterior, or atmosphere
+    - **AI Prompt**: Carefully crafted prompts that preserve architectural integrity
+    - **Preview Thumbnail**: Visual representation of the style
+    
+    <CodeGroup>
+    ```typescript Available Styles
+    // Source: lib/style-templates.ts
+    export const STYLE_TEMPLATES: StyleTemplate[] = [
+      {
+        id: "scandinavian",
+        name: "Scandinavian",
+        description: "Light, airy spaces with natural wood and minimal decor",
+        category: "staging",
+        prompt: "Transform into a Scandinavian-style interior. Add light wooden furniture..."
+      }
+    ];
+    ```
+    
+    ```typescript Style Categories
+    export type StyleCategory = 
+      | "staging"    // Virtual staging and furniture
+      | "lighting"   // Lighting enhancements
+      | "exterior"   // Outdoor transformations
+      | "atmosphere"; // Mood and ambiance
+    ```
+    </CodeGroup>
+  </Step>
+  
+  <Step title="Upload Photos">
+    Upload up to 10 images per project. Supported formats:
+    - JPEG (.jpg, .jpeg)
+    - PNG (.png)
+    - Maximum 10 images per project
+    
+    Images are stored securely in Supabase Storage with workspace-level isolation:
+    
+    ```typescript
+    // Source: lib/supabase.ts
+    export function getImagePath(
+      workspaceId: string,
+      projectId: string,
+      fileName: string,
+      type: "original" | "result"
+    ): string {
+      return `${workspaceId}/${projectId}/${type}/${fileName}`;
+    }
+    ```
+  </Step>
+  
+  <Step title="Assign Room Types">
+    Before processing, assign a room type to each image. This provides context to the AI model:
+    
+    <Tabs>
+      <Tab title="Available Room Types">
+        - Living Room
+        - Bedroom
+        - Kitchen
+        - Bathroom
+        - Dining Room
+        - Office
+        - And more...
+        
+        ```typescript
+        // Source: lib/style-templates.ts
+        export const ROOM_TYPES: RoomTypeOption[] = [
+          {
+            id: "living-room",
+            label: "Living Room",
+            icon: "IconSofa",
+            description: "Living spaces, family rooms, lounges"
+          },
+          // ... more room types
+        ];
+        ```
+      </Tab>
+      
+      <Tab title="Bulk Assignment">
+        Select multiple images and assign the same room type to all selected images at once.
+        
+        ```typescript
+        // Source: lib/actions.ts
+        const result = await bulkUpdateImageRoomTypes(
+          imageIds,
+          roomType
+        );
+        ```
+      </Tab>
+    </Tabs>
+  </Step>
+  
+  <Step title="Start Processing">
+    Once all images have room types assigned, click **Start Processing** to begin AI enhancement.
+    
+    The system will:
+    1. Validate payment status (if required)
+    2. Trigger background processing for each image
+    3. Update project status to "processing"
+  </Step>
+</Steps>
+
+## AI Processing Pipeline
+
+When you start processing, each image goes through a multi-stage AI pipeline powered by Trigger.dev for orchestration.
+
+### Processing Stages
+
+<Tabs>
+  <Tab title="Stage 1: Fetching">
+    ```typescript
+    // Source: trigger/process-image.ts
+    metadata.set("status", {
+      step: "fetching",
+      label: "Loading image…",
+      progress: 10,
+    });
+    
+    const image = await getImageGenerationById(imageId);
+    await updateImageGeneration(imageId, { status: "processing" });
+    ```
+    
+    The system retrieves the image record from the database and updates its status.
+  </Tab>
+  
+  <Tab title="Stage 2: Uploading">
+    ```typescript
+    metadata.set("status", {
+      step: "uploading",
+      label: "Preparing for AI…",
+      progress: 25,
+    });
+    
+    const imageResponse = await fetch(image.originalImageUrl);
+    const imageBlob = await imageResponse.blob();
+    const falImageUrl = await fal.storage.upload(
+      new File([imageBlob], "input.jpg", { type: imageBlob.type })
+    );
+    ```
+    
+    Images are uploaded to Fal.ai's temporary storage for AI processing.
+  </Tab>
+  
+  <Tab title="Stage 3: Processing">
+    ```typescript
+    metadata.set("status", {
+      step: "processing",
+      label: "Enhancing image…",
+      progress: 50,
+    });
+    
+    const result = await fal.subscribe(NANO_BANANA_PRO_EDIT, {
+      input: {
+        prompt: image.prompt,
+        image_urls: [falImageUrl],
+        num_images: 1,
+        output_format: "jpeg",
+      },
+    });
+    ```
+    
+    The AI model processes the image using:
+    - **Model**: Nano Banana Pro (Fal.ai)
+    - **Custom Prompt**: Combines style template + room type + architectural preservation rules
+  </Tab>
+  
+  <Tab title="Stage 4: Saving">
+    ```typescript
+    metadata.set("status", {
+      step: "saving",
+      label: "Saving result…",
+      progress: 80,
+    });
+    
+    const resultImageResponse = await fetch(resultImageUrl);
+    const resultImageBuffer = await resultImageResponse.arrayBuffer();
+    
+    const storedResultUrl = await uploadImage(
+      new Uint8Array(resultImageBuffer),
+      resultPath,
+      contentType
+    );
+    
+    await updateImageGeneration(imageId, {
+      status: "completed",
+      resultImageUrl: storedResultUrl,
+    });
+    ```
+    
+    Results are saved to permanent storage and the database is updated.
+  </Tab>
+</Tabs>
+
+### Real-Time Progress Tracking
+
+The UI displays live progress updates using Trigger.dev's real-time hooks:
+
+```tsx
+// Source: components/dashboard/project-detail-content.tsx
+const { run } = useRealtimeRun(runId, {
+  accessToken: accessToken,
+  enabled: !!runId && !!accessToken,
+});
+
+const status = run?.metadata?.status;
+const label = status?.label || "Enhancing…";
+```
+
+<Note>
+Processing typically takes 30-90 seconds per image depending on complexity and model load.
+</Note>
+
+## Prompt Engineering
+
+AI Studio uses sophisticated prompt generation to ensure high-quality results:
+
+```typescript
+// Source: lib/style-templates.ts
+export function generatePrompt(
+  template: StyleTemplate,
+  roomType: string | null
+): string {
+  const preserveStructure =
+    "Do not move, remove, or modify windows, walls, doors, or any architectural elements. " +
+    "Keep the room layout exactly as shown.";
+
+  let prompt = template.prompt;
+
+  if (roomType) {
+    const roomLabel = roomType.replace(/-/g, " ");
+    prompt = `This is a ${roomLabel}. ${prompt}`;
+  }
+
+  return `${prompt} ${preserveStructure}`;
+}
+```
+
+<Accordion title="Why Architectural Preservation Matters">
+The system explicitly instructs the AI to preserve:
+- Window positions and sizes
+- Wall structures and layouts
+- Door locations
+- Ceiling heights
+- Overall room dimensions
+
+This ensures the edited photos remain accurate representations of the actual property.
+</Accordion>
+
+## Image Viewing & Management
+
+### Comparison View
+
+Compare original and enhanced images side-by-side with an interactive slider:
+
+```tsx
+// Source: components/dashboard/project-detail-content.tsx
+function ComparisonView({ originalUrl, enhancedUrl, onClose }) {
+  const [sliderPosition, setSliderPosition] = React.useState(50);
+  
+  return (
+    <div className="relative" onMouseMove={handleMouseMove}>
+      {/* Enhanced image (full width) */}
+      <Image src={enhancedUrl} />
+      
+      {/* Original image (clipped) */}
+      <div style={{ clipPath: `inset(0 ${100 - sliderPosition}% 0 0)` }}>
+        <Image src={originalUrl} />
+      </div>
+    </div>
+  );
+}
+```
+
+**Keyboard Shortcuts:**
+- `C` - Open comparison view
+- `E` - Edit selected image
+- `D` - Download images
+- `A` - Select all
+- `Esc` - Clear selection
+
+### Image Lightbox
+
+Full-screen gallery with keyboard navigation:
+- `←` / `→` - Navigate between images
+- `Esc` - Close lightbox
+- Film strip thumbnails for quick navigation
+
+## Advanced Editing
+
+### Inpainting (Touch-ups)
+
+For precise edits, use the inpainting tool to modify specific areas:
+
+<Steps>
+  <Step title="Open Editor">
+    Click the **Edit** button on any completed image to launch the mask editor.
+  </Step>
+  
+  <Step title="Draw Mask">
+    Use the brush tool to paint over areas you want to modify. Adjust brush size with the slider.
+    
+    ```tsx
+    // Source: components/dashboard/image-mask-editor.tsx
+    const [brushSize, setBrushSize] = useState(40);
+    const [isDrawing, setIsDrawing] = useState(false);
+    ```
+  </Step>
+  
+  <Step title="Describe Changes">
+    Enter a text description of how you want the masked area to change.
+    
+    Example: "Replace with a modern gray sectional sofa"
+  </Step>
+  
+  <Step title="Generate">
+    The system creates a new version of the image with your changes applied.
+  </Step>
+</Steps>
+
+### Version History
+
+Each edit creates a new version while preserving the original:
+
+```typescript
+// Source: lib/db/schema.ts
+export const imageGeneration = pgTable("image_generation", {
+  id: text("id").primaryKey(),
+  version: integer("version").notNull().default(1), // v1, v2, v3...
+  parentId: text("parent_id"), // Links to original image
+  originalImageUrl: text("original_image_url").notNull(),
+  resultImageUrl: text("result_image_url"),
+  // ...
+});
+```
+
+View and compare all versions:
+- Click the version badge (e.g., "v2/3") on any image
+- Browse thumbnail grid of all versions
+- Select any version to compare or edit further
+
+<Warning>
+Version chains are tracked by `parentId`. The root image has `parentId: null`, and subsequent edits reference the original image's ID.
+</Warning>
+
+## Downloading Results
+
+### Single Image Download
+
+Click the download icon on any image to save it:
+
+```typescript
+const metadata = image.metadata as { originalFileName?: string } | null;
+const originalName = metadata?.originalFileName || `image-${image.id}`;
+const versionSuffix = (image.version || 1) > 1 ? `-v${image.version}` : "";
+const filename = `${baseName}${versionSuffix}.${extension}`;
+```
+
+Filenames preserve the original name and append version numbers for edited images.
+
+### Bulk Download
+
+<Tabs>
+  <Tab title="Download All">
+    Click **Download All** to get a ZIP file containing all completed images in the project.
+    
+    ```typescript
+    // API endpoint: /api/download/[projectId]
+    const url = `/api/download/${project.id}`;
+    window.location.href = url;
+    ```
+  </Tab>
+  
+  <Tab title="Download Selected">
+    1. Select multiple images by clicking them
+    2. Click **Download** to download only selected images
+    
+    ```typescript
+    const url = `/api/download/${project.id}?imageIds=${imageIds.join(",")}`;
+    ```
+  </Tab>
+</Tabs>
+
+## Project Status Flow
+
+Projects move through several states:
+
+```typescript
+// Source: lib/db/schema.ts
+export type ProjectStatus = "pending" | "processing" | "completed" | "failed";
+```
+
+<Steps>
+  <Step title="Pending">
+    Initial state after project creation. Images uploaded but not yet processed.
+    
+    **Actions Available:**
+    - Add more images (up to 10)
+    - Assign room types
+    - Start processing
+  </Step>
+  
+  <Step title="Processing">
+    At least one image is currently being enhanced by AI.
+    
+    **Actions Available:**
+    - View real-time progress
+    - Compare completed images
+    - Download completed images
+  </Step>
+  
+  <Step title="Completed">
+    All images successfully processed.
+    
+    **Actions Available:**
+    - View and compare all images
+    - Edit images (creates new versions)
+    - Download all results
+  </Step>
+  
+  <Step title="Failed">
+    Processing failed for one or more images.
+    
+    **Actions Available:**
+    - View error messages
+    - Retry failed images
+    - Download successful results
+  </Step>
+</Steps>
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Photo Quality Guidelines">
+    For best results:
+    - Use well-lit photos (avoid extreme shadows)
+    - Shoot from room corners to show maximum space
+    - Keep camera level (avoid tilted angles)
+    - Minimum resolution: 1280x720px
+    - Avoid heavily compressed images
+  </Accordion>
+  
+  <Accordion title="Room Type Selection">
+    Accurate room types improve AI results:
+    - Be specific (e.g., "Master Bedroom" vs generic "Bedroom")
+    - Use consistent naming within a project
+    - For ambiguous spaces, choose the primary function
+  </Accordion>
+  
+  <Accordion title="Style Template Selection">
+    Choose templates that match the property:
+    - **Scandinavian**: Modern, minimalist properties
+    - **Lighting**: Enhance existing staged photos
+    - **Exterior**: Curb appeal improvements
+    - **Atmosphere**: Mood and ambiance adjustments
+  </Accordion>
+</AccordionGroup>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Processing is stuck">
+    If an image remains in "Processing" for over 5 minutes:
+    
+    1. Check your internet connection
+    2. Refresh the page (progress is preserved)
+    3. If still stuck, contact support with the image ID
+    
+    The system includes automatic retry logic:
+    
+    ```typescript
+    // Source: trigger/process-image.ts
+    export const processImageTask = task({
+      id: "process-image",
+      maxDuration: 300, // 5 minutes
+      retry: {
+        maxAttempts: 3,
+        minTimeoutInMs: 1000,
+        maxTimeoutInMs: 10_000,
+        factor: 2,
+      },
+    });
+    ```
+  </Accordion>
+  
+  <Accordion title="Results don't look right">
+    If AI results are unsatisfactory:
+    
+    1. **Try inpainting**: Use the edit tool for targeted fixes
+    2. **Check room type**: Incorrect room type can affect results
+    3. **Create new version**: Start fresh with different settings
+    4. **Retry processing**: Click retry to regenerate with different random seed
+  </Accordion>
+  
+  <Accordion title="Can't add more images">
+    Projects are limited to 10 root images (excluding versions).
+    
+    ```typescript
+    const rootImageCount = imageGroups.length;
+    const canAddMore = rootImageCount < 10;
+    ```
+    
+    To add more photos:
+    1. Create a new project
+    2. Or delete unused images from the current project
+  </Accordion>
+</AccordionGroup>

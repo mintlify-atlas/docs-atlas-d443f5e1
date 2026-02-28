@@ -1,0 +1,327 @@
+---
+title: 'Inpaint Image'
+description: 'Edit specific areas of images by adding or removing objects'
+---
+
+## POST /api/inpaint-image
+
+Performs inpainting operations on images using AI to either remove unwanted objects or add new ones based on a mask and prompt. This endpoint uses the Qwen Image Edit Inpaint model to make targeted edits.
+
+### Authentication
+
+This endpoint requires authentication. Include your session token in the request.
+
+### Request Body
+
+<ParamField body="imageId" type="string" required>
+  The ID of the source image to edit. Can be an original upload or a previously processed image.
+</ParamField>
+
+<ParamField body="maskDataUrl" type="string" required>
+  Base64-encoded data URL of the mask image (PNG format). White pixels indicate areas to edit, black pixels are preserved.
+</ParamField>
+
+<ParamField body="prompt" type="string" required>
+  Description of what to add or how to fill the masked area. For remove mode, describe how to fill the space (e.g., "clean wall").
+</ParamField>
+
+<ParamField body="mode" type="string" default="remove">
+  Edit mode: `remove` to remove objects or `add` to add objects.
+</ParamField>
+
+<ParamField body="replaceNewerVersions" type="boolean" default="false">
+  If true, deletes any newer versions in the edit history before creating this edit.
+</ParamField>
+
+### Request Example
+
+```bash
+curl -X POST https://yourdomain.com/api/inpaint-image \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_SESSION_TOKEN" \
+  -d '{
+    "imageId": "550e8400-e29b-41d4-a716-446655440000",
+    "maskDataUrl": "data:image/png;base64,iVBORw0KGgoAAAANS...",
+    "prompt": "clean white wall",
+    "mode": "remove",
+    "replaceNewerVersions": false
+  }'
+```
+
+```json Request (Remove Mode)
+{
+  "imageId": "550e8400-e29b-41d4-a716-446655440000",
+  "maskDataUrl": "data:image/png;base64,iVBORw0KGgoAAAANS...",
+  "prompt": "clean white wall",
+  "mode": "remove"
+}
+```
+
+```json Request (Add Mode)
+{
+  "imageId": "550e8400-e29b-41d4-a716-446655440000",
+  "maskDataUrl": "data:image/png;base64,iVBORw0KGgoAAAANS...",
+  "prompt": "modern gray sofa",
+  "mode": "add"
+}
+```
+
+### Response
+
+<ResponseField name="success" type="boolean">
+  Indicates whether the inpainting completed successfully.
+</ResponseField>
+
+<ResponseField name="resultUrl" type="string">
+  The URL of the edited image stored in Supabase.
+</ResponseField>
+
+<ResponseField name="newImageId" type="string">
+  The ID of the newly created image generation record for this edit.
+</ResponseField>
+
+<ResponseField name="version" type="number">
+  The version number of this edit in the history chain.
+</ResponseField>
+
+<ResponseField name="error" type="string">
+  Error message if the request failed.
+</ResponseField>
+
+<ResponseField name="details" type="string">
+  Additional error details for debugging.
+</ResponseField>
+
+### Response Examples
+
+<ResponseExample>
+```json Success Response
+{
+  "success": true,
+  "resultUrl": "https://storage.supabase.co/workspace/project/result-v2.jpg",
+  "newImageId": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+  "version": 2
+}
+```
+</ResponseExample>
+
+<ResponseExample>
+```json Error Response
+{
+  "error": "Inpainting failed",
+  "details": "Failed to fetch source image: 404"
+}
+```
+</ResponseExample>
+
+### Status Codes
+
+<ResponseField name="200" type="Success">
+  Image edited successfully.
+</ResponseField>
+
+<ResponseField name="400" type="Bad Request">
+  Missing required fields (`imageId`, `prompt`, or `maskDataUrl`).
+</ResponseField>
+
+<ResponseField name="404" type="Not Found">
+  Source image not found in database.
+</ResponseField>
+
+<ResponseField name="500" type="Internal Server Error">
+  Inpainting failed due to AI service error or internal error.
+</ResponseField>
+
+## Processing Flow
+
+1. **Validation** - Verifies required fields and image existence
+2. **Source Selection** - Uses result image if available, otherwise original
+3. **Image Preparation** - Fetches source image and extracts dimensions
+4. **Mask Processing** - Decodes base64 mask and resizes to match source dimensions
+5. **Upload to Fal.ai** - Uploads both image and mask to Fal.ai storage
+6. **AI Inpainting** - Calls Qwen Image Edit Inpaint model
+7. **Save Result** - Downloads and stores the result in Supabase
+8. **Create Version** - Creates new image generation record as next version
+9. **Update Counts** - Updates project's image counts
+
+## Edit Mode Comparison
+
+<Card title="Remove Mode" icon="eraser">
+  Removes objects from the masked area and fills with contextually appropriate content based on the prompt.
+  
+  **Example**: Remove furniture → prompt: "clean hardwood floor"
+</Card>
+
+<Card title="Add Mode" icon="plus">
+  Adds new objects to the masked area based on the prompt description.
+  
+  **Example**: Add furniture → prompt: "modern gray sectional sofa"
+</Card>
+
+<Note>
+  Both modes use the same Qwen Image Edit Inpaint model. The prompt determines what appears in the masked area.
+</Note>
+
+## Version History
+
+Each inpaint operation creates a new version of the image:
+
+```typescript
+// Original image
+{
+  id: "image-1",
+  version: 1,
+  parentId: null,
+  originalImageUrl: "original.jpg",
+  resultImageUrl: "processed.jpg"
+}
+
+// First edit (remove object)
+{
+  id: "image-2",
+  version: 2,
+  parentId: "image-1",
+  originalImageUrl: "original.jpg",  // Keeps reference to original
+  resultImageUrl: "edited-v2.jpg",
+  metadata: {
+    editedFrom: "image-1",
+    editMode: "remove",
+    model: "qwen-image-edit-inpaint"
+  }
+}
+
+// Second edit (add object)
+{
+  id: "image-3",
+  version: 3,
+  parentId: "image-1",
+  originalImageUrl: "original.jpg",
+  resultImageUrl: "edited-v3.jpg",
+  metadata: {
+    editedFrom: "image-2",
+    editMode: "add",
+    model: "qwen-image-edit-inpaint"
+  }
+}
+```
+
+## Replace Newer Versions
+
+When editing an older version with `replaceNewerVersions: true`:
+
+1. All versions newer than the current one are deleted
+2. The new edit becomes the latest version
+3. Version numbers continue from where they left off
+
+**Example**: Editing v2 with flag enabled will delete v3, v4, etc., and create a new v3.
+
+## Mask Format
+
+The mask must be provided as a base64-encoded PNG data URL:
+
+```javascript
+// Format
+"data:image/png;base64,iVBORw0KGgoAAAANS..."
+
+// Mask rules
+// - White pixels (255,255,255): Areas to edit
+// - Black pixels (0,0,0): Areas to preserve
+// - The mask is automatically resized to match source image dimensions
+```
+
+## AI Model Configuration
+
+This endpoint uses the **Qwen Image Edit Inpaint** model:
+
+<ParamField body="prompt" type="string">
+  Description of what to generate in the masked area.
+</ParamField>
+
+<ParamField body="image_url" type="string">
+  Source image URL (uploaded to Fal.ai storage).
+</ParamField>
+
+<ParamField body="mask_url" type="string">
+  Mask image URL (uploaded to Fal.ai storage).
+</ParamField>
+
+<ParamField body="output_format" type="string" default="jpeg">
+  Output format for the edited image.
+</ParamField>
+
+### Optional Parameters
+
+The model supports additional parameters (not exposed by default):
+
+- `num_inference_steps` (default: 30) - More steps = higher quality
+- `guidance_scale` (default: 4) - Balance between prompt adherence and quality
+- `strength` (default: 0.93) - Strength of the noising process
+- `seed` - For reproducible results
+- `negative_prompt` - Terms to avoid in generation
+
+## Image Processing Details
+
+### Mask Resizing
+
+Masks are automatically resized using Sharp:
+
+```javascript
+const resizedMaskBuffer = await sharp(maskBuffer)
+  .resize(imageWidth, imageHeight, { fit: 'fill' })
+  .png()
+  .toBuffer();
+```
+
+### Storage Organization
+
+Edited images follow this path structure:
+
+```
+workspace-{workspaceId}/
+  project-{projectId}/
+    results/
+      {uniqueId}.jpg  // Each version has a unique file
+```
+
+## Error Handling
+
+Common error scenarios:
+
+<Warning>
+  **Missing mask** - Both add and remove modes require a mask.
+</Warning>
+
+<Warning>
+  **Invalid mask format** - Ensure mask is a valid base64-encoded PNG data URL.
+</Warning>
+
+<Warning>
+  **Image not found** - Verify the `imageId` exists and belongs to your workspace.
+</Warning>
+
+<Warning>
+  **Fetch failed** - Source image must be accessible from the server.
+</Warning>
+
+## Usage Tips
+
+<Tip>
+  **Remove furniture**: Use a broad brush for the mask and prompt like "clean hardwood floor" or "empty room".
+</Tip>
+
+<Tip>
+  **Add furniture**: Be specific in your prompt: "modern gray sectional sofa" works better than "sofa".
+</Tip>
+
+<Tip>
+  **Wall repairs**: Mask damaged areas and prompt with "clean white wall" or "smooth painted wall".
+</Tip>
+
+<Tip>
+  **Sky replacement**: Mask the sky and prompt with "blue sky with white clouds" or "sunset sky".
+</Tip>
+
+## Related Endpoints
+
+- [Process Image](/api-reference/images/process) - Apply style transformations
+- [Image Status](/api-reference/images/status) - Check processing status

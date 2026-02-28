@@ -1,0 +1,341 @@
+---
+title: Deployment Guide
+description: Deploy AI Studio to production with Vercel, Supabase, and Trigger.dev
+---
+
+## Overview
+
+AI Studio is built with Next.js 16 and designed for deployment on Vercel with Supabase for database and storage. Background jobs are handled by Trigger.dev for AI processing tasks.
+
+## Prerequisites
+
+Before deploying, you'll need accounts for:
+
+- [Vercel](https://vercel.com/) - Hosting and deployment
+- [Supabase](https://supabase.com/) - PostgreSQL database and storage
+- [Trigger.dev](https://trigger.dev/) - Background job processing
+- [Fal.ai](https://fal.ai/) - AI image generation (get API key)
+- [Resend](https://resend.com/) - Email delivery (get API key)
+
+## Environment Variables
+
+AI Studio requires the following environment variables. Reference the `.env.example` file in the repository:
+
+### Database (Supabase)
+
+```bash
+DATABASE_URL=postgresql://postgres.[project-ref]:[password]@[host]:6543/postgres
+```
+
+<Note>
+Use the **Transaction pooler** connection string from Supabase Dashboard → Settings → Database for serverless environments.
+</Note>
+
+### Supabase Storage & Auth
+
+```bash
+NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_SECRET_KEY=sb_secret_your_supabase_secret_key_here
+```
+
+Get these from Supabase Dashboard → Settings → API
+
+### Authentication (Better Auth)
+
+```bash
+BETTER_AUTH_SECRET=your_secret_key_here_min_32_characters
+BETTER_AUTH_URL=https://your-domain.com
+```
+
+<Tip>
+Generate a secure secret with: `openssl rand -base64 32`
+</Tip>
+
+### App Configuration
+
+```bash
+NEXT_PUBLIC_APP_URL=https://your-domain.com
+```
+
+### AI Services (Fal.ai)
+
+```bash
+FAL_API_KEY=your_fal_api_key_here
+```
+
+Get your API key from [Fal.ai Dashboard](https://fal.ai/dashboard/keys). Pricing is approximately $0.039 per image edit.
+
+### Email (Resend)
+
+```bash
+RESEND_API_KEY=re_your_resend_api_key_here
+```
+
+Get your API key from [Resend API Keys](https://resend.com/api-keys)
+
+### Background Jobs (Trigger.dev)
+
+```bash
+TRIGGER_SECRET_KEY=tr_prod_your_trigger_secret_key
+```
+
+Get production keys from [Trigger.dev Dashboard](https://cloud.trigger.dev) → Your Project → Settings
+
+## Database Setup
+
+### 1. Create Supabase Project
+
+1. Go to [Supabase Dashboard](https://supabase.com/dashboard)
+2. Create a new project
+3. Wait for database provisioning (2-3 minutes)
+
+### 2. Configure Connection Pooling
+
+For serverless deployments (Vercel), use the **Transaction pooler**:
+
+1. Navigate to Settings → Database
+2. Copy the "Transaction" connection string
+3. Use port `6543` (not `5432`)
+
+### 3. Push Database Schema
+
+The database schema is defined in `lib/db/schema.ts` using Drizzle ORM:
+
+```bash
+pnpm db:push
+```
+
+This syncs your schema to Supabase without migrations.
+
+<Warning>
+`db:push` is for development. For production, use `pnpm db:generate` and `pnpm db:migrate` to create and run migrations.
+</Warning>
+
+## Vercel Deployment
+
+### Initial Setup
+
+1. **Import Repository**
+   - Go to [Vercel Dashboard](https://vercel.com/dashboard)
+   - Click "Add New" → "Project"
+   - Import your GitHub repository
+
+2. **Configure Build Settings**
+   - Framework Preset: Next.js
+   - Build Command: `pnpm build`
+   - Output Directory: `.next` (auto-detected)
+   - Install Command: `pnpm install`
+
+3. **Add Environment Variables**
+   - Copy all variables from `.env.example`
+   - Paste into Vercel → Settings → Environment Variables
+   - Apply to Production, Preview, and Development environments
+
+<Note>
+Next.js Build Configuration: The `next.config.ts` sets `typescript.ignoreBuildErrors: true`. Remove this in production for strict type checking.
+</Note>
+
+### Image Configuration
+
+AI Studio uses Next.js Image optimization with remote patterns configured in `next.config.ts`:
+
+```typescript
+images: {
+  remotePatterns: [
+    {
+      protocol: "https",
+      hostname: "*.supabase.co",
+      pathname: "/storage/v1/object/public/**",
+    },
+  ],
+}
+```
+
+Add additional domains as needed for your image sources.
+
+### Deploy
+
+```bash
+git push origin main
+```
+
+Vercel automatically deploys on push to main branch.
+
+## Trigger.dev Setup
+
+AI Studio uses Trigger.dev v4 for background processing of:
+- Image generation (`trigger/process-image.ts`)
+- Image inpainting (`trigger/inpaint-image.ts`)
+- Video clip generation (`trigger/generate-video-clip.ts`)
+- Video transitions (`trigger/generate-transition-clip.ts`)
+- Video compilation (`trigger/compile-video.ts`)
+- Video orchestration (`trigger/video-orchestrator.ts`)
+
+### 1. Create Trigger.dev Project
+
+1. Go to [Trigger.dev Cloud](https://cloud.trigger.dev)
+2. Create a new project
+3. Note your project ID (already set in `trigger.config.ts`)
+
+### 2. Get Production API Key
+
+1. Navigate to your project settings
+2. Go to API Keys tab
+3. Copy the **Production** secret key (`tr_prod_...`)
+4. Add to Vercel environment variables as `TRIGGER_SECRET_KEY`
+
+### 3. Deploy Trigger Tasks
+
+After deploying to Vercel, deploy your Trigger.dev tasks:
+
+```bash
+pnpm trigger:deploy
+```
+
+This command:
+- Bundles all tasks in the `trigger/` directory
+- Uploads to Trigger.dev
+- Makes them available for production use
+
+<Warning>
+Trigger.dev tasks must be deployed separately from your Vercel deployment. Run `pnpm trigger:deploy` after each change to background jobs.
+</Warning>
+
+## Post-Deployment Checklist
+
+- [ ] Verify environment variables in Vercel dashboard
+- [ ] Run database migrations: `pnpm db:push` (or use migrations)
+- [ ] Deploy Trigger.dev tasks: `pnpm trigger:deploy`
+- [ ] Test authentication flow (sign up, sign in)
+- [ ] Test image upload to Supabase storage
+- [ ] Test AI image generation (verify Fal.ai integration)
+- [ ] Test email sending (verify Resend integration)
+- [ ] Test background job processing (check Trigger.dev dashboard)
+- [ ] Set up domain and SSL (Vercel automatic)
+- [ ] Configure OAuth providers in Better Auth (if using)
+
+## Monitoring
+
+### Vercel Analytics
+
+Enable in Vercel Dashboard → Analytics for:
+- Traffic monitoring
+- Performance metrics
+- Error tracking
+
+### Trigger.dev Monitoring
+
+View background jobs in [Trigger.dev Dashboard](https://cloud.trigger.dev):
+- Task runs and status
+- Retry attempts
+- Error logs
+- Performance metrics
+
+### Supabase Logs
+
+Monitor database and storage in Supabase Dashboard:
+- Query performance
+- Storage usage
+- API requests
+
+## Troubleshooting
+
+### Build Failures
+
+**TypeScript Errors**
+
+The project has `typescript.ignoreBuildErrors: true` in `next.config.ts`. For production:
+
+```typescript
+typescript: { ignoreBuildErrors: false }
+```
+
+Fix all type errors before deploying.
+
+**Dependency Issues**
+
+Ensure you're using `pnpm`:
+
+```bash
+pnpm install --frozen-lockfile
+```
+
+### Database Connection Issues
+
+**Connection Pooling**
+
+Use the Transaction pooler (port 6543) for Vercel:
+
+```
+postgresql://postgres.[project]:password@aws-0-region.pooler.supabase.com:6543/postgres
+```
+
+**SSL Required**
+
+Supabase requires SSL connections. Drizzle handles this automatically via the connection string.
+
+### Trigger.dev Not Processing
+
+1. Verify `TRIGGER_SECRET_KEY` is set in Vercel
+2. Check you deployed tasks: `pnpm trigger:deploy`
+3. View logs in Trigger.dev dashboard
+4. Ensure you're using the production key (`tr_prod_...`)
+
+## Scaling Considerations
+
+### Database
+
+- Supabase free tier: Up to 500MB database
+- Upgrade to Pro for larger databases and better performance
+- Consider connection pooling for high traffic
+
+### Compute
+
+Trigger.dev configuration in `trigger.config.ts`:
+
+```typescript
+maxDuration: 3600, // 1 hour max per task
+retries: {
+  default: {
+    maxAttempts: 3,
+    minTimeoutInMs: 1000,
+    maxTimeoutInMs: 10_000,
+    factor: 2,
+  },
+}
+```
+
+Adjust based on your workload.
+
+### Storage
+
+- Supabase free tier: 1GB storage
+- Upgrade for more capacity
+- Consider CDN for image delivery
+
+## Continuous Deployment
+
+Vercel automatically deploys:
+- **Production**: Pushes to `main` branch
+- **Preview**: Pull requests and other branches
+
+No additional CI/CD setup required.
+
+<Tip>
+Enable Vercel's preview deployments to test changes before merging to production.
+</Tip>
+
+## Security Best Practices
+
+1. **Environment Variables**: Never commit `.env.local` to git
+2. **API Keys**: Rotate keys periodically
+3. **Database**: Use strong passwords
+4. **Better Auth Secret**: Minimum 32 characters, cryptographically random
+5. **CORS**: Configure allowed origins in API routes if needed
+6. **Rate Limiting**: Consider adding rate limits to AI processing endpoints
+
+## Next Steps
+
+- [Testing Guide](/development/testing) - Learn about the testing approach
+- [Contributing Guide](/development/contributing) - Start contributing to the project
+- [API Reference](/api-reference/overview) - Explore the API endpoints

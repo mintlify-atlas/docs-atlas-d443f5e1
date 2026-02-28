@@ -1,0 +1,261 @@
+---
+title: "Compile Video"
+description: "Trigger video generation and compilation"
+---
+
+## Overview
+
+Initiates the video generation workflow that creates AI-powered video clips from images and compiles them into a final video with transitions and audio. This endpoint starts a background job via Trigger.dev that orchestrates the entire pipeline.
+
+## Authentication
+
+Requires an authenticated user session. Only the video project owner or workspace members can trigger compilation.
+
+## Endpoint
+
+```
+POST /api/trigger-video
+```
+
+## Request Body
+
+<ParamField body="videoProjectId" type="string" required>
+  The ID of the video project to process
+  
+  Example: `"vp_abc123def456"`
+</ParamField>
+
+## Response
+
+<ResponseField name="success" type="boolean">
+  Whether the video generation was successfully triggered
+</ResponseField>
+
+<ResponseField name="runId" type="string">
+  Trigger.dev run ID for tracking progress
+</ResponseField>
+
+<ResponseField name="publicAccessToken" type="string">
+  Token for accessing run progress via Trigger.dev API
+</ResponseField>
+
+<ResponseField name="message" type="string">
+  Success or error message
+</ResponseField>
+
+## Example Request
+
+```bash
+curl -X POST https://your-domain.com/api/trigger-video \
+  -H "Content-Type: application/json" \
+  -H "Cookie: session=your-session-token" \
+  -d '{
+    "videoProjectId": "vp_abc123def456"
+  }'
+```
+
+## Example Response
+
+```json
+{
+  "success": true,
+  "runId": "run_xyz789abc",
+  "publicAccessToken": "tr_pat_xxxxxxxx",
+  "message": "Video generation started successfully"
+}
+```
+
+## Error Response
+
+```json
+{
+  "success": false,
+  "error": "Video project not found"
+}
+```
+
+## Video Generation Pipeline
+
+Once triggered, the system executes these steps in order:
+
+<Steps>
+  <Step title="Fetch project data">
+    Loads video project and all clip configurations from database
+  </Step>
+  
+  <Step title="Generate clips in parallel">
+    Creates 5-second AI videos for each image using Kling AI model
+    
+    - Processes up to 3 clips simultaneously
+    - Each clip takes 2-5 minutes
+    - Applies motion prompts for camera movement
+  </Step>
+  
+  <Step title="Generate transitions">
+    Creates seamless transition videos between clips (if enabled)
+    
+    - Uses end frame of clip N and start frame of clip N+1
+    - Generates 1-second transition clips
+  </Step>
+  
+  <Step title="Compile final video">
+    Uses FFmpeg to merge all clips into final video
+    
+    - Concatenates clips with transitions
+    - Mixes background music at specified volume
+    - Adds AI-generated ambient audio (if enabled)
+    - Exports in MP4 format (H.264)
+  </Step>
+  
+  <Step title="Upload and finalize">
+    Uploads final video to Supabase Storage and updates database
+  </Step>
+</Steps>
+
+## Real-Time Progress Tracking
+
+Use the returned `runId` and `publicAccessToken` to track progress:
+
+```typescript
+// From source: trigger/video-orchestrator.ts:44-84
+import { useRealtimeRun } from "@trigger.dev/react-hooks";
+
+function VideoProgress({ runId, accessToken }) {
+  const { run } = useRealtimeRun(runId, { accessToken });
+  
+  const status = run?.metadata?.status as {
+    step: string;
+    label: string;
+    clipIndex?: number;
+    totalClips?: number;
+    progress?: number;
+  };
+  
+  return (
+    <div>
+      <p>{status?.label}</p>
+      <progress value={status?.progress} max={100} />
+      {status?.clipIndex && (
+        <p>Clip {status.clipIndex} of {status.totalClips}</p>
+      )}
+    </div>
+  );
+}
+```
+
+## Status Progression
+
+The video project `status` field updates throughout the process:
+
+| Status | Description | Next Action |
+|--------|-------------|-------------|
+| `draft` | Initial state after creation | Trigger compilation |
+| `generating` | AI clips being generated | Wait for completion |
+| `compiling` | FFmpeg merging clips | Wait for completion |
+| `completed` | Video ready for download | Download from `finalVideoUrl` |
+| `failed` | Error occurred | Check `errorMessage` |
+
+## Background Task Implementation
+
+```typescript
+// From source: trigger/video-orchestrator.ts:29-39
+export const generateVideoTask = task({
+  id: "generate-video",
+  queue: {
+    name: "video-generation",
+    concurrencyLimit: 1, // Process one video at a time
+  },
+  maxDuration: 1800, // 30 minutes max
+  retry: {
+    maxAttempts: 1, // Don't retry failed videos
+  },
+  run: async (payload: GenerateVideoPayload) => {
+    // ... generation logic
+  },
+});
+```
+
+## Parallel Clip Processing
+
+Clips are generated in batches of 3 for optimal performance:
+
+```typescript
+// From source: trigger/video-orchestrator.ts:91-100
+const clipResults = await generateVideoClipTask.batchTriggerAndWait(
+  clips.map((clip) => ({
+    payload: {
+      clipId: clip.id,
+      tailImageUrl: clip.endImageUrl || clip.sourceImageUrl,
+      targetRoomLabel: clip.roomLabel || clip.roomType.replace(/-/g, " "),
+    },
+  })),
+  { batchSize: 3 } // 3 clips at a time
+);
+```
+
+## Cost Tracking
+
+The system tracks costs throughout the process:
+
+```typescript
+// From source: trigger/video-orchestrator.ts:68-75
+await updateVideoProject(videoProjectId, {
+  status: "generating",
+  clipCount: clips.length,
+  estimatedCost: costToCents(
+    calculateVideoCost(
+      clips.length,
+      VIDEO_DEFAULTS.CLIP_DURATION,
+      videoProject.generateNativeAudio
+    )
+  ),
+});
+```
+
+<Note>
+**Cost formula:** Each 5-second clip costs $0.35 USD. A 10-clip video costs approximately $3.50.
+</Note>
+
+## Error Handling
+
+Common errors and solutions:
+
+<AccordionGroup>
+  <Accordion title="Video project not found">
+    Ensure the `videoProjectId` exists and belongs to your workspace.
+  </Accordion>
+  
+  <Accordion title="No clips to generate">
+    Add at least one clip to the video project before triggering compilation.
+  </Accordion>
+  
+  <Accordion title="Kling AI timeout">
+    Clip generation can take 2-5 minutes. The system automatically retries failed clips up to 3 times.
+  </Accordion>
+  
+  <Accordion title="FFmpeg compilation failed">
+    Check that all clip URLs are accessible and video files are valid MP4 format.
+  </Accordion>
+</AccordionGroup>
+
+## Performance Considerations
+
+- **Parallel processing**: Up to 3 clips generated simultaneously
+- **Queue management**: One video compilation at a time to prevent resource exhaustion
+- **Timeout**: 30-minute maximum duration per video
+- **Retry logic**: Clip generation retries up to 3 times, orchestrator does not retry
+
+<Warning>
+Video generation is resource-intensive. Avoid triggering multiple compilations for the same project simultaneously.
+</Warning>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Check Status" icon="clock" href="/api-reference/videos/status">
+    Monitor video generation progress
+  </Card>
+  <Card title="Create Project" icon="plus" href="/api-reference/videos/create">
+    Create a new video project
+  </Card>
+</CardGroup>

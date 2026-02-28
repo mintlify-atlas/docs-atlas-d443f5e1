@@ -1,0 +1,404 @@
+---
+title: "White Label Branding"
+description: "Customize AI Studio with your brand colors and logo for enterprise customers"
+---
+
+## Overview
+
+Enterprise plan customers can customize AI Studio with their own branding, including logo and color scheme. This creates a seamless experience for their team members.
+
+## Branding Fields
+
+Defined in workspace schema at `lib/db/schema.ts:25`:
+
+```typescript
+export const workspace = pgTable("workspace", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  
+  // White-label branding
+  logo: text("logo"),
+  primaryColor: text("primary_color"),
+  secondaryColor: text("secondary_color"),
+});
+```
+
+### Logo
+
+- **Field**: `logo` (text, nullable)
+- **Format**: URL to uploaded image
+- **Recommended**: PNG or SVG, 200x200px
+- **Max size**: 2MB
+
+### Primary Color
+
+- **Field**: `primaryColor` (text, nullable)
+- **Format**: Hex color code (e.g., `#3B82F6`)
+- **Usage**: Main brand color, buttons, highlights
+
+### Secondary Color
+
+- **Field**: `secondaryColor` (text, nullable)
+- **Format**: Hex color code (e.g., `#10B981`)
+- **Usage**: Accents, secondary buttons, badges
+
+## Workspace Settings Form
+
+Implemented in `components/settings/workspace-form.tsx`:
+
+### Logo Upload UI
+
+From `workspace-form.tsx:64`:
+
+```tsx
+<div className="flex items-center gap-4">
+  <div
+    className="flex h-20 w-20 items-center justify-center rounded-xl bg-muted ring-1 ring-foreground/5"
+    style={{
+      background: workspace.logo
+        ? `url(${workspace.logo}) center/cover`
+        : "linear-gradient(135deg, color-mix(in oklch, var(--accent-teal) 20%, transparent) 0%, color-mix(in oklch, var(--accent-teal) 5%, transparent) 100%)",
+    }}
+  >
+    {!workspace.logo && (
+      <IconBuilding
+        className="h-8 w-8"
+        style={{ color: "var(--accent-teal)" }}
+      />
+    )}
+  </div>
+  <div className="space-y-1">
+    <Button className="gap-2" size="sm" type="button" variant="outline">
+      <IconUpload className="h-4 w-4" />
+      Upload Logo
+    </Button>
+    <p className="text-muted-foreground text-xs">
+      PNG, JPG up to 2MB. Recommended 200x200px.
+    </p>
+  </div>
+</div>
+```
+
+### Form Fields
+
+Workspace settings include:
+
+<Steps>
+  <Step title="Workspace Name">
+    Company or team name displayed throughout the app.
+  </Step>
+  
+  <Step title="Logo Upload">
+    Custom logo replaces default building icon.
+  </Step>
+  
+  <Step title="Organization Number">
+    Norwegian 9-digit org number for invoice eligibility.
+  </Step>
+  
+  <Step title="Contact Details">
+    Email and contact person for billing and support.
+  </Step>
+</Steps>
+
+## Admin Workspace Detail
+
+Admins can view and edit all workspace branding:
+
+From `components/admin/workspace-detail-content.tsx:229`:
+
+```typescript
+const defaultWorkspace: Workspace = {
+  id: workspace.id,
+  name: workspace.name,
+  slug: workspace.slug,
+  logo: null,
+  primaryColor: null,
+  secondaryColor: null,
+  organizationNumber: workspace.organizationNumber,
+  contactEmail: workspace.contactEmail,
+  contactPerson: workspace.contactPerson,
+  // ...
+};
+```
+
+## Where Branding Appears
+
+### Dashboard Header
+
+Workspace logo appears in the top-left navigation.
+
+### Settings Page
+
+Full branding editor at `/dashboard/settings`.
+
+From `components/settings/settings-content.tsx:88`:
+
+```tsx
+<SettingsSection
+  icon={IconBuilding}
+  title="Workspace"
+  description="Your organization details and branding"
+>
+  <WorkspaceForm workspace={workspace} />
+</SettingsSection>
+```
+
+### Email Templates
+
+Custom branding can be applied to email notifications (invitations, receipts, etc.).
+
+### Project Sharing
+
+When sharing project links externally, workspace logo appears in the preview.
+
+## Updating Branding
+
+### Via UI
+
+Users with `owner` or `admin` role can update branding at `/dashboard/settings`.
+
+### Via API
+
+Update workspace branding programmatically:
+
+```typescript
+import { db } from "@/lib/db";
+import { workspace } from "@/lib/db/schema";
+import { eq } from "drizzle-orm";
+
+await db.update(workspace)
+  .set({
+    logo: "https://storage.example.com/logos/acme-corp.png",
+    primaryColor: "#FF6B6B",
+    secondaryColor: "#4ECDC4",
+    updatedAt: new Date(),
+  })
+  .where(eq(workspace.id, workspaceId));
+```
+
+### Via Admin Panel
+
+System admins can edit branding for any workspace at `/admin/workspaces/[id]`.
+
+## Storage Implementation
+
+### Logo Upload
+
+Logos are uploaded to Supabase Storage:
+
+<Steps>
+  <Step title="User Selects Image">
+    File input accepts PNG, JPG, SVG up to 2MB.
+  </Step>
+  
+  <Step title="Upload to Supabase">
+    Image uploaded to `workspace-logos` bucket using Supabase client:
+    
+    ```typescript
+    const { data, error } = await supabase.storage
+      .from('workspace-logos')
+      .upload(`${workspaceId}/${filename}`, file);
+    ```
+  </Step>
+  
+  <Step title="Get Public URL">
+    Retrieve public URL for the uploaded image:
+    
+    ```typescript
+    const { data } = supabase.storage
+      .from('workspace-logos')
+      .getPublicUrl(`${workspaceId}/${filename}`);
+    ```
+  </Step>
+  
+  <Step title="Save URL to Database">
+    Update workspace record with logo URL:
+    
+    ```typescript
+    await db.update(workspace)
+      .set({ logo: data.publicUrl })
+      .where(eq(workspace.id, workspaceId));
+    ```
+  </Step>
+</Steps>
+
+### Supabase Configuration
+
+Required environment variables from `.env.example:21`:
+
+```bash
+# Supabase Storage & Auth
+NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_SECRET_KEY=sb_secret_your_supabase_secret_key_here
+```
+
+## Applying Custom Colors
+
+### CSS Variables
+
+Primary and secondary colors can be applied as CSS custom properties:
+
+```tsx
+<div
+  style={{
+    '--workspace-primary': workspace.primaryColor || '#3B82F6',
+    '--workspace-secondary': workspace.secondaryColor || '#10B981',
+  } as React.CSSProperties}
+>
+  <Button style={{ backgroundColor: 'var(--workspace-primary)' }}>
+    Custom Button
+  </Button>
+</div>
+```
+
+### Tailwind Integration
+
+Extend Tailwind config with workspace colors:
+
+```javascript
+module.exports = {
+  theme: {
+    extend: {
+      colors: {
+        'workspace-primary': 'var(--workspace-primary)',
+        'workspace-secondary': 'var(--workspace-secondary)',
+      },
+    },
+  },
+};
+```
+
+## Default Branding
+
+When no custom branding is set:
+
+- **Logo**: Default building icon (`IconBuilding` from Tabler Icons)
+- **Primary Color**: Platform teal (`var(--accent-teal)`)
+- **Secondary Color**: Platform blue (`var(--accent-blue)`)
+
+## Plan Requirements
+
+<Note>
+White-label branding is typically available for **Enterprise** plan customers only. Free and Pro plans use default AI Studio branding.
+</Note>
+
+Check plan before allowing customization:
+
+```typescript
+const workspace = await getWorkspaceById(workspaceId);
+
+if (workspace.plan !== "enterprise") {
+  return { 
+    success: false, 
+    error: "White-label branding requires Enterprise plan" 
+  };
+}
+```
+
+## Validation
+
+### Logo Validation
+
+```typescript
+function validateLogo(file: File): { valid: boolean; error?: string } {
+  // Check file size (2MB max)
+  if (file.size > 2 * 1024 * 1024) {
+    return { valid: false, error: "Logo must be under 2MB" };
+  }
+  
+  // Check file type
+  const allowedTypes = ['image/png', 'image/jpeg', 'image/svg+xml'];
+  if (!allowedTypes.includes(file.type)) {
+    return { valid: false, error: "Logo must be PNG, JPG, or SVG" };
+  }
+  
+  return { valid: true };
+}
+```
+
+### Color Validation
+
+```typescript
+function validateHexColor(color: string): boolean {
+  return /^#[0-9A-F]{6}$/i.test(color);
+}
+```
+
+## Examples
+
+### Complete Branding Setup
+
+```typescript
+import { updateWorkspaceSettings } from "@/lib/actions";
+
+const result = await updateWorkspaceSettings(new FormData({
+  name: "Acme Real Estate",
+  logo: "https://cdn.acme.com/logo.png",
+  primaryColor: "#E63946",
+  secondaryColor: "#F1FAEE",
+  organizationNumber: "987654321",
+  contactEmail: "billing@acme.com",
+  contactPerson: "Jane Smith",
+}));
+
+if (result.success) {
+  console.log("Branding updated successfully");
+}
+```
+
+### Displaying Branded Logo
+
+```tsx
+import { getWorkspaceById } from "@/lib/db/queries";
+import { IconBuilding } from "@tabler/icons-react";
+
+const workspace = await getWorkspaceById(workspaceId);
+
+export function WorkspaceLogo() {
+  return (
+    <div className="flex h-12 w-12 items-center justify-center rounded-lg">
+      {workspace.logo ? (
+        <img 
+          src={workspace.logo} 
+          alt={workspace.name}
+          className="h-full w-full object-cover rounded-lg"
+        />
+      ) : (
+        <IconBuilding className="h-6 w-6 text-muted-foreground" />
+      )}
+    </div>
+  );
+}
+```
+
+## Security Considerations
+
+<Warning>
+Validate logo URLs to prevent XSS attacks. Only allow uploads to trusted storage providers (Supabase, S3, etc.).
+</Warning>
+
+### URL Validation
+
+```typescript
+function isValidLogoUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    const allowedHosts = [
+      'supabase.co',
+      's3.amazonaws.com',
+      'cdn.yourdomain.com',
+    ];
+    
+    return allowedHosts.some(host => parsed.hostname.endsWith(host));
+  } catch {
+    return false;
+  }
+}
+```
+
+## Related Topics
+
+- [Pricing & Plans](/platform/pricing) - Enterprise plan features
+- [Admin Panel](/platform/admin-panel) - Managing workspace settings
+- [Workspace Settings](/guides/workspace-settings) - User guide for branding

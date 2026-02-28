@@ -1,0 +1,378 @@
+---
+title: Stripe Integration
+description: Payment processing for project purchases
+---
+
+## Overview
+
+Stripe handles payment processing in AI Studio for:
+
+- Project purchases (image editing projects)
+- Subscription management (future feature)
+- Invoicing and receipts
+
+The platform uses Stripe Checkout for a hosted payment experience.
+
+## Configuration
+
+### Environment Variables
+
+Add the following to your `.env.local` file:
+
+```bash
+# Stripe Secret Key
+# Get from: https://dashboard.stripe.com/apikeys
+STRIPE_SECRET_KEY=sk_test_your_stripe_secret_key_here
+
+# Product Price ID (optional override)
+# Created via Stripe dashboard or Stripe MCP
+STRIPE_PRICE_PROJECT_USD=price_1SneD7KOzkjqB2nyMT5KWVAb
+```
+
+### Setup Steps
+
+<Steps>
+  <Step title="Create Stripe Account">
+    1. Sign up at [stripe.com](https://stripe.com)
+    2. Complete account verification
+    3. Activate your account for live payments
+  </Step>
+
+  <Step title="Get API Keys">
+    1. Go to [API Keys](https://dashboard.stripe.com/apikeys)
+    2. For testing: Copy the **Test mode** secret key (starts with `sk_test_`)
+    3. For production: Copy the **Live mode** secret key (starts with `sk_live_`)
+    4. Add to `.env.local` as `STRIPE_SECRET_KEY`
+
+    <Warning>
+      Never commit secret keys to version control. Always use environment variables.
+    </Warning>
+  </Step>
+
+  <Step title="Create Product and Price">
+    Create a product for project purchases:
+
+    **Option 1: Via Stripe Dashboard**
+    1. Go to [Products](https://dashboard.stripe.com/products)
+    2. Click **Add Product**
+    3. Name: "AI Studio Project"
+    4. Description: "AI-powered photo editing project"
+    5. Set price: $99.00 USD (one-time payment)
+    6. Save and copy the Price ID (starts with `price_`)
+
+    **Option 2: Via Stripe MCP (if using MCP)**
+    ```bash
+    # Create product and price using Stripe MCP tools
+    ```
+
+    Add the Price ID to your `.env.local`:
+    ```bash
+    STRIPE_PRICE_PROJECT_USD=price_your_actual_price_id
+    ```
+  </Step>
+
+  <Step title="Configure Webhooks (Optional)">
+    For production, set up webhooks to handle payment events:
+
+    1. Go to [Webhooks](https://dashboard.stripe.com/webhooks)
+    2. Click **Add endpoint**
+    3. URL: `https://yourdomain.com/api/webhooks/stripe`
+    4. Select events:
+       - `checkout.session.completed`
+       - `payment_intent.succeeded`
+       - `payment_intent.payment_failed`
+    5. Copy the webhook signing secret
+    6. Add to `.env.local` as `STRIPE_WEBHOOK_SECRET`
+  </Step>
+</Steps>
+
+## Stripe Client
+
+The Stripe client is configured in `lib/stripe.ts`:
+
+```typescript lib/stripe.ts
+import Stripe from "stripe";
+
+// Stripe client singleton
+export const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
+  apiVersion: "2025-05-28.basil",
+});
+
+// Stripe configuration constants
+export const STRIPE_CONFIG = {
+  // Product and Price IDs
+  PRICE_PROJECT_USD:
+    process.env.STRIPE_PRICE_PROJECT_USD || "price_1SneD7KOzkjqB2nyMT5KWVAb",
+
+  // Pricing (in cents)
+  PROJECT_PRICE_USD_CENTS: 9900, // $99 USD
+  PROJECT_PRICE_NOK_ORE: 100_000, // 1000 NOK
+
+  // URLs
+  SUCCESS_URL: `${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/dashboard`,
+  CANCEL_URL: `${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/dashboard`,
+} as const;
+
+// Helper to get the base URL for redirects
+export function getBaseUrl() {
+  if (process.env.NEXT_PUBLIC_APP_URL) {
+    return process.env.NEXT_PUBLIC_APP_URL;
+  }
+  if (process.env.VERCEL_URL) {
+    return `https://${process.env.VERCEL_URL}`;
+  }
+  return "http://localhost:3000";
+}
+```
+
+## Creating Checkout Sessions
+
+### Basic Checkout Session
+
+```typescript
+import { stripe, STRIPE_CONFIG } from "@/lib/stripe";
+
+const session = await stripe.checkout.sessions.create({
+  mode: "payment",
+  line_items: [
+    {
+      price: STRIPE_CONFIG.PRICE_PROJECT_USD,
+      quantity: 1,
+    },
+  ],
+  success_url: STRIPE_CONFIG.SUCCESS_URL,
+  cancel_url: STRIPE_CONFIG.CANCEL_URL,
+  metadata: {
+    projectId: "proj_123",
+    workspaceId: "ws_456",
+    userId: "user_789",
+  },
+});
+
+// Redirect user to checkout
+return Response.redirect(session.url);
+```
+
+### With Customer Information
+
+```typescript
+const session = await stripe.checkout.sessions.create({
+  mode: "payment",
+  customer_email: user.email,
+  line_items: [
+    {
+      price: STRIPE_CONFIG.PRICE_PROJECT_USD,
+      quantity: 1,
+    },
+  ],
+  success_url: `${STRIPE_CONFIG.SUCCESS_URL}?session_id={CHECKOUT_SESSION_ID}`,
+  cancel_url: STRIPE_CONFIG.CANCEL_URL,
+  metadata: {
+    projectId: project.id,
+    workspaceId: workspace.id,
+    userId: user.id,
+  },
+});
+```
+
+## API Route Example
+
+Create a checkout session from an API route:
+
+```typescript app/api/create-checkout/route.ts
+import { stripe, STRIPE_CONFIG, getBaseUrl } from "@/lib/stripe";
+import { auth } from "@/lib/auth";
+
+export async function POST(request: Request) {
+  // Authenticate user
+  const session = await auth();
+  if (!session?.user) {
+    return Response.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  try {
+    const { projectId, workspaceId } = await request.json();
+
+    // Create Stripe Checkout session
+    const checkoutSession = await stripe.checkout.sessions.create({
+      mode: "payment",
+      customer_email: session.user.email,
+      line_items: [
+        {
+          price: STRIPE_CONFIG.PRICE_PROJECT_USD,
+          quantity: 1,
+        },
+      ],
+      success_url: `${getBaseUrl()}/dashboard?success=true`,
+      cancel_url: `${getBaseUrl()}/dashboard?canceled=true`,
+      metadata: {
+        projectId,
+        workspaceId,
+        userId: session.user.id,
+      },
+    });
+
+    return Response.json({
+      sessionId: checkoutSession.id,
+      url: checkoutSession.url,
+    });
+  } catch (error) {
+    console.error("Stripe checkout error:", error);
+    return Response.json(
+      { error: "Failed to create checkout session" },
+      { status: 500 }
+    );
+  }
+}
+```
+
+## Webhook Handling
+
+Handle Stripe webhook events:
+
+```typescript app/api/webhooks/stripe/route.ts
+import { stripe } from "@/lib/stripe";
+import { headers } from "next/headers";
+
+export async function POST(request: Request) {
+  const body = await request.text();
+  const signature = headers().get("stripe-signature");
+
+  let event;
+
+  try {
+    event = stripe.webhooks.constructEvent(
+      body,
+      signature!,
+      process.env.STRIPE_WEBHOOK_SECRET!
+    );
+  } catch (err) {
+    console.error("Webhook signature verification failed:", err);
+    return Response.json({ error: "Invalid signature" }, { status: 400 });
+  }
+
+  // Handle the event
+  switch (event.type) {
+    case "checkout.session.completed":
+      const session = event.data.object;
+      
+      // Update your database
+      const { projectId, workspaceId, userId } = session.metadata;
+      
+      await markProjectAsPaid(projectId);
+      await sendReceiptEmail(userId, session.id);
+      
+      break;
+
+    case "payment_intent.succeeded":
+      const paymentIntent = event.data.object;
+      console.log("Payment succeeded:", paymentIntent.id);
+      break;
+
+    case "payment_intent.payment_failed":
+      const failedPayment = event.data.object;
+      console.error("Payment failed:", failedPayment.id);
+      break;
+
+    default:
+      console.log(`Unhandled event type: ${event.type}`);
+  }
+
+  return Response.json({ received: true });
+}
+```
+
+## Pricing Configuration
+
+The default pricing is defined in `STRIPE_CONFIG`:
+
+```typescript
+export const STRIPE_CONFIG = {
+  // USD pricing
+  PROJECT_PRICE_USD_CENTS: 9900, // $99.00
+  
+  // NOK pricing (Norwegian Krone)
+  PROJECT_PRICE_NOK_ORE: 100_000, // 1000 NOK
+};
+```
+
+### Multiple Currencies
+
+To support multiple currencies, create separate Price IDs:
+
+```typescript
+export const STRIPE_CONFIG = {
+  PRICE_PROJECT_USD: process.env.STRIPE_PRICE_PROJECT_USD,
+  PRICE_PROJECT_EUR: process.env.STRIPE_PRICE_PROJECT_EUR,
+  PRICE_PROJECT_NOK: process.env.STRIPE_PRICE_PROJECT_NOK,
+};
+
+// Use based on user locale
+const priceId = locale === "no" 
+  ? STRIPE_CONFIG.PRICE_PROJECT_NOK 
+  : STRIPE_CONFIG.PRICE_PROJECT_USD;
+```
+
+## Testing
+
+### Test Cards
+
+Use Stripe's test cards in test mode:
+
+- **Success**: `4242 4242 4242 4242`
+- **Declined**: `4000 0000 0000 0002`
+- **3D Secure**: `4000 0027 6000 3184`
+
+Use any future expiry date and any 3-digit CVC.
+
+### Test Mode vs Live Mode
+
+Stripe has separate API keys for testing and production:
+
+- **Test mode**: Use `sk_test_` keys for development
+- **Live mode**: Use `sk_live_` keys for production
+
+Switch modes in the Stripe dashboard using the toggle in the top-right corner.
+
+## Error Handling
+
+Handle Stripe errors gracefully:
+
+```typescript
+try {
+  const session = await stripe.checkout.sessions.create({...});
+} catch (error) {
+  if (error instanceof Stripe.errors.StripeCardError) {
+    // Card was declined
+    console.error("Card declined:", error.message);
+  } else if (error instanceof Stripe.errors.StripeInvalidRequestError) {
+    // Invalid parameters
+    console.error("Invalid request:", error.message);
+  } else if (error instanceof Stripe.errors.StripeAPIError) {
+    // Stripe API error
+    console.error("Stripe API error:", error.message);
+  } else {
+    // Unknown error
+    console.error("Unknown error:", error);
+  }
+  
+  throw new Error("Payment processing failed");
+}
+```
+
+## Security Best Practices
+
+1. **Never expose secret keys** - Only use in server-side code
+2. **Validate webhook signatures** - Always verify webhook authenticity
+3. **Use HTTPS** - Required for live mode
+4. **Store minimal data** - Don't store card details (Stripe handles this)
+5. **Use metadata** - Store IDs for correlating payments with your database
+
+## Resources
+
+- [Stripe Documentation](https://stripe.com/docs)
+- [Checkout Sessions Guide](https://stripe.com/docs/payments/checkout)
+- [Webhooks Guide](https://stripe.com/docs/webhooks)
+- [API Reference](https://stripe.com/docs/api)
+- [Dashboard](https://dashboard.stripe.com)
+- [Test Cards](https://stripe.com/docs/testing)

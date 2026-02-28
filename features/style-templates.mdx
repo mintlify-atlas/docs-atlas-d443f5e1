@@ -1,0 +1,710 @@
+---
+title: 'Style Templates'
+description: 'Pre-configured AI prompts for consistent, professional photo transformations'
+icon: 'palette'
+---
+
+## Overview
+
+Style Templates are pre-configured AI prompts that enable consistent, high-quality photo transformations. Each template combines carefully crafted prompts with architectural preservation rules to ensure realistic results.
+
+## Template Architecture
+
+### Data Structure
+
+```typescript
+// Source: lib/style-templates.ts
+export interface StyleTemplate {
+  id: string;                    // Unique identifier
+  name: string;                  // Display name
+  description: string;           // User-facing description
+  category: StyleCategory;       // Grouping category
+  thumbnail: string;             // Preview image URL
+  prompt: string;                // AI generation prompt
+  comingSoon?: boolean;          // Hide from selection
+}
+
+export type StyleCategory = 
+  | "staging"      // Virtual staging and furniture
+  | "lighting"     // Lighting enhancements
+  | "exterior"     // Outdoor transformations
+  | "atmosphere";  // Mood and ambiance
+```
+
+### Built-in Templates
+
+<Tabs>
+  <Tab title="Current Templates">
+    ```typescript
+    // Source: lib/style-templates.ts
+    export const STYLE_TEMPLATES: StyleTemplate[] = [
+      {
+        id: "scandinavian",
+        name: "Scandinavian",
+        description: "Light, airy spaces with natural wood and minimal decor",
+        category: "staging",
+        thumbnail: "https://images.unsplash.com/photo-1586023492125-27b2c045efd7",
+        prompt: "Transform into a Scandinavian-style interior. Add light wooden furniture, white and neutral tones, natural textures like linen and wool, minimalist decor with clean lines. Include plants for freshness. The space should feel bright, calm, and inviting with excellent natural lighting.",
+      },
+    ];
+    ```
+    
+    **Scandinavian Style:**
+    - Light wood tones
+    - Neutral color palette (whites, grays, beiges)
+    - Minimalist furniture
+    - Natural materials
+    - Abundant natural light
+    - Indoor plants
+    - Clean, simple lines
+  </Tab>
+  
+  <Tab title="Coming Soon">
+    Templates in development:
+    
+    <CardGroup cols={2}>
+      <Card title="Modern Luxury" icon="gem">
+        High-end finishes and contemporary design:
+        - Premium materials
+        - Bold accent colors
+        - Statement lighting
+        - Designer furniture
+      </Card>
+      
+      <Card title="Coastal" icon="umbrella-beach">
+        Beach-inspired aesthetics:
+        - White and blue tones
+        - Natural textures
+        - Light, airy feel
+        - Nautical accents
+      </Card>
+      
+      <Card title="Industrial" icon="industry">
+        Urban loft aesthetic:
+        - Exposed brick
+        - Metal fixtures
+        - Concrete accents
+        - Edison bulbs
+      </Card>
+      
+      <Card title="Traditional" icon="crown">
+        Classic elegance:
+        - Rich wood tones
+        - Ornate details
+        - Formal furniture
+        - Crown molding
+      </Card>
+    </CardGroup>
+    
+    ```typescript
+    {
+      id: "coming-soon",
+      name: "More Styles Coming Soon",
+      description: "New design templates are on the way",
+      category: "staging",
+      comingSoon: true, // Excluded from selection
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## Template Categories
+
+Templates are organized by their primary function:
+
+```typescript
+export const ALL_CATEGORIES: StyleCategory[] = [
+  "staging",
+  "lighting",
+  "exterior",
+  "atmosphere",
+];
+```
+
+<Tabs>
+  <Tab title="Staging">
+    **Virtual Staging Templates**
+    
+    Transform empty or outdated spaces:
+    - Add furniture and decor
+    - Update color schemes
+    - Modern design styles
+    - Room functionality
+    
+    ```typescript
+    getTemplatesByCategory("staging")
+    ```
+    
+    **Use Cases:**
+    - Empty properties
+    - Outdated furniture
+    - Rental turnover
+    - Pre-sale preparation
+    
+    <Info>
+    Staging templates preserve room architecture while adding appropriate furnishings.
+    </Info>
+  </Tab>
+  
+  <Tab title="Lighting">
+    **Lighting Enhancement Templates**
+    
+    Improve photo lighting quality:
+    - Brighten dark rooms
+    - Balance exposure
+    - Add ambient lighting
+    - Window light enhancement
+    
+    **Use Cases:**
+    - Underexposed photos
+    - Mixed lighting sources
+    - Gloomy weather shots
+    - Evening photography
+    
+    <Note>
+    Lighting templates maintain the existing scene while improving visibility and ambiance.
+    </Note>
+  </Tab>
+  
+  <Tab title="Exterior">
+    **Outdoor Transformation Templates**
+    
+    Enhance curb appeal:
+    - Landscaping improvements
+    - Seasonal adjustments
+    - Sky replacement
+    - Color enhancement
+    
+    **Use Cases:**
+    - Winter photos → summer greenery
+    - Overcast skies → blue skies
+    - Overgrown lawns → manicured
+    - Dull colors → vibrant
+  </Tab>
+  
+  <Tab title="Atmosphere">
+    **Mood & Ambiance Templates**
+    
+    Create specific feelings:
+    - Cozy and warm
+    - Fresh and clean
+    - Luxurious and elegant
+    - Spacious and airy
+    
+    **Use Cases:**
+    - Emotional marketing
+    - Lifestyle branding
+    - Target audience matching
+    - Seasonal themes
+  </Tab>
+</Tabs>
+
+## Prompt Engineering
+
+### Prompt Generation
+
+Templates combine with room context to create optimal prompts:
+
+```typescript
+// Source: lib/style-templates.ts
+export function generatePrompt(
+  template: StyleTemplate,
+  roomType: string | null
+): string {
+  const preserveStructure =
+    "Do not move, remove, or modify windows, walls, doors, or any " +
+    "architectural elements. Keep the room layout exactly as shown.";
+
+  let prompt = template.prompt;
+
+  if (roomType) {
+    const roomLabel = roomType.replace(/-/g, " ");
+    prompt = `This is a ${roomLabel}. ${prompt}`;
+  }
+
+  return `${prompt} ${preserveStructure}`;
+}
+```
+
+**Example Output:**
+
+<CodeGroup>
+```text Living Room
+This is a living room. Transform into a Scandinavian-style interior. Add light wooden furniture, white and neutral tones, natural textures like linen and wool, minimalist decor with clean lines. Include plants for freshness. The space should feel bright, calm, and inviting with excellent natural lighting. Do not move, remove, or modify windows, walls, doors, or any architectural elements. Keep the room layout exactly as shown.
+```
+
+```text Kitchen
+This is a kitchen. Transform into a Scandinavian-style interior. Add light wooden furniture, white and neutral tones, natural textures like linen and wool, minimalist decor with clean lines. Include plants for freshness. The space should feel bright, calm, and inviting with excellent natural lighting. Do not move, remove, or modify windows, walls, doors, or any architectural elements. Keep the room layout exactly as shown.
+```
+</CodeGroup>
+
+### Architectural Preservation
+
+All templates include strict preservation rules:
+
+```typescript
+const preserveStructure =
+  "Do not move, remove, or modify windows, walls, doors, or any " +
+  "architectural elements. Keep the room layout exactly as shown.";
+```
+
+**Protected Elements:**
+- Window positions and sizes
+- Wall placement and structure
+- Door locations and styles
+- Ceiling height and features
+- Built-in fixtures
+- Architectural details
+- Floor plan dimensions
+
+<Warning>
+These preservation rules ensure AI-generated images remain accurate representations of the actual property.
+</Warning>
+
+## Room Type Context
+
+Templates adapt based on room type:
+
+```typescript
+// Source: lib/style-templates.ts
+export interface RoomTypeOption {
+  id: string;          // Internal identifier
+  label: string;       // Display name
+  icon: string;        // Tabler icon name
+  description: string; // Usage hint
+}
+
+export const ROOM_TYPES: RoomTypeOption[] = [
+  {
+    id: "living-room",
+    label: "Living Room",
+    icon: "IconSofa",
+    description: "Living spaces, family rooms, lounges",
+  },
+  {
+    id: "bedroom",
+    label: "Bedroom",
+    icon: "IconBed",
+    description: "Bedrooms, master suites, guest rooms",
+  },
+  {
+    id: "kitchen",
+    label: "Kitchen",
+    icon: "IconToolsKitchen2",
+    description: "Kitchens and cooking areas",
+  },
+  {
+    id: "bathroom",
+    label: "Bathroom",
+    icon: "IconBath",
+    description: "Bathrooms, en-suites, powder rooms",
+  },
+  {
+    id: "dining-room",
+    label: "Dining Room",
+    icon: "IconArmchair",
+    description: "Dining areas and breakfast nooks",
+  },
+  {
+    id: "office",
+    label: "Office",
+    icon: "IconDesk",
+    description: "Home offices and study rooms",
+  },
+];
+```
+
+### Room-Specific Adaptation
+
+The AI model adjusts based on room type:
+
+<Tabs>
+  <Tab title="Living Room">
+    - Adds sofas, coffee tables, entertainment centers
+    - Focuses on seating arrangements
+    - Includes decorative elements
+    - Emphasizes comfort and gathering
+  </Tab>
+  
+  <Tab title="Kitchen">
+    - Keeps appliances and counters
+    - Adds appropriate accessories
+    - Maintains work triangle
+    - Focuses on functionality
+  </Tab>
+  
+  <Tab title="Bedroom">
+    - Centers on bed placement
+    - Adds nightstands and dressers
+    - Creates relaxing atmosphere
+    - Includes bedding and linens
+  </Tab>
+  
+  <Tab title="Bathroom">
+    - Preserves fixtures
+    - Adds towels and accessories
+    - Focuses on cleanliness
+    - Enhances lighting
+  </Tab>
+</Tabs>
+
+## Using Templates
+
+### Template Selection
+
+Choose a template when creating a project:
+
+```tsx
+// Source: components/projects/new-project-dialog.tsx
+<TemplateSelector
+  templates={getSelectableTemplates()}
+  selectedId={selectedTemplateId}
+  onSelect={setSelectedTemplateId}
+/>
+```
+
+<Steps>
+  <Step title="Browse Categories">
+    Filter templates by category:
+    
+    ```typescript
+    const stagingTemplates = getTemplatesByCategory("staging");
+    const lightingTemplates = getTemplatesByCategory("lighting");
+    ```
+  </Step>
+  
+  <Step title="Preview Template">
+    View template details:
+    - Name and description
+    - Category badge
+    - Example thumbnail
+    - Intended use cases
+  </Step>
+  
+  <Step title="Select Template">
+    Click to select for your project:
+    
+    ```typescript
+    export function getTemplateById(id: string): StyleTemplate | undefined {
+      return STYLE_TEMPLATES.find((t) => t.id === id);
+    }
+    ```
+  </Step>
+  
+  <Step title="Assign to Project">
+    Template applied to all images in project:
+    
+    ```typescript
+    // Source: lib/db/schema.ts
+    export const project = pgTable("project", {
+      id: text("id").primaryKey(),
+      styleTemplateId: text("style_template_id").notNull(),
+      roomType: text("room_type"),
+    });
+    ```
+  </Step>
+</Steps>
+
+### Template Application
+
+Templates are applied during AI processing:
+
+```typescript
+// Source: trigger/process-image.ts
+const image = await getImageGenerationById(imageId);
+
+const result = await fal.subscribe(NANO_BANANA_PRO_EDIT, {
+  input: {
+    prompt: image.prompt, // Generated from template
+    image_urls: [falImageUrl],
+    num_images: 1,
+    output_format: "jpeg",
+  },
+});
+```
+
+**Processing Flow:**
+
+1. **Load Template**: Retrieve template by ID
+2. **Add Room Context**: Combine with room type
+3. **Add Preservation Rules**: Ensure architectural accuracy
+4. **Generate Image**: Send to AI model
+5. **Store Result**: Save enhanced image
+
+## Filtering Templates
+
+### Selectable vs Coming Soon
+
+Filter out unavailable templates:
+
+```typescript
+// Source: lib/style-templates.ts
+export function getSelectableTemplates(): StyleTemplate[] {
+  return STYLE_TEMPLATES.filter((t) => !t.comingSoon);
+}
+```
+
+**UI Implementation:**
+
+```tsx
+<TemplateGrid>
+  {STYLE_TEMPLATES.map(template => (
+    <TemplateCard
+      key={template.id}
+      template={template}
+      disabled={template.comingSoon}
+      badge={template.comingSoon ? "Coming Soon" : undefined}
+      onClick={() => !template.comingSoon && onSelect(template.id)}
+    />
+  ))}
+</TemplateGrid>
+```
+
+## Creating Custom Templates
+
+<Note>
+Custom template creation is planned for a future release.
+</Note>
+
+**Planned Features:**
+
+- **Template Builder**: Visual prompt editor
+- **Test & Preview**: Try template before saving
+- **Template Library**: Save and reuse custom templates
+- **Team Sharing**: Share templates across workspace
+- **Import/Export**: Transfer templates between accounts
+
+**Future Data Model:**
+
+```typescript
+// Proposed schema
+export const customTemplate = pgTable("custom_template", {
+  id: text("id").primaryKey(),
+  workspaceId: text("workspace_id").notNull(),
+  name: text("name").notNull(),
+  prompt: text("prompt").notNull(),
+  category: text("category").notNull(),
+  isPublic: boolean("is_public").default(false),
+  usageCount: integer("usage_count").default(0),
+});
+```
+
+## Template Performance
+
+### Prompt Quality
+
+Template prompts are optimized for:
+
+<Tabs>
+  <Tab title="Consistency">
+    **Repeatable Results**
+    
+    Well-crafted prompts produce consistent outputs:
+    - Similar images get similar treatments
+    - Predictable style application
+    - Reliable quality
+    
+    ```typescript
+    // Consistent phrasing
+    "Transform into a Scandinavian-style interior..."
+    // vs inconsistent
+    "Make it look Scandinavian"
+    ```
+  </Tab>
+  
+  <Tab title="Specificity">
+    **Detailed Instructions**
+    
+    Specific prompts yield better results:
+    - Clear style descriptions
+    - Concrete element examples
+    - Desired atmosphere details
+    
+    ```typescript
+    // Specific
+    "Add light wooden furniture, white and neutral tones, natural textures..."
+    // vs vague
+    "Add some furniture"
+    ```
+  </Tab>
+  
+  <Tab title="Preservation">
+    **Architectural Accuracy**
+    
+    Every template includes preservation rules:
+    - Explicit structural constraints
+    - Layout maintenance instructions
+    - Element protection directives
+    
+    ```typescript
+    "Do not move, remove, or modify windows, walls, doors, or any architectural elements."
+    ```
+  </Tab>
+</Tabs>
+
+### Success Metrics
+
+Template performance is monitored:
+
+```typescript
+// Tracking template usage
+interface TemplateMetrics {
+  templateId: string;
+  usageCount: number;
+  averageRating: number;
+  successRate: number; // Completed without errors
+  retryRate: number;   // User retried processing
+}
+```
+
+**Key Metrics:**
+- Usage frequency
+- User satisfaction ratings
+- Processing success rate
+- Retry frequency
+- Average processing time
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Choosing the Right Template">
+    **Match Template to Goal:**
+    
+    | Goal | Recommended Category |
+    |------|---------------------|
+    | Empty room → Furnished | Staging |
+    | Dark photo → Bright | Lighting |
+    | Winter → Summer | Exterior |
+    | Cold → Warm feeling | Atmosphere |
+    
+    **Consider:**
+    - Property type (residential vs commercial)
+    - Target audience (luxury vs budget)
+    - Current condition (empty vs staged)
+    - Photography quality (professional vs amateur)
+  </Accordion>
+  
+  <Accordion title="Room Type Accuracy">
+    **Correct room types improve results:**
+    
+    ```typescript
+    // Good
+    { roomType: "living-room", template: "scandinavian" }
+    // ✓ Adds sofas, coffee tables, appropriate furniture
+    
+    // Bad
+    { roomType: "bathroom", template: "scandinavian" }
+    // ✗ May add inappropriate elements
+    ```
+    
+    Always assign the correct room type before processing.
+  </Accordion>
+  
+  <Accordion title="Template Consistency">
+    **Use same template across project:**
+    
+    For a cohesive look:
+    - Apply one template to all rooms in a property
+    - Maintain consistent style throughout
+    - Build recognizable brand identity
+    
+    Exception: Different templates for interior vs exterior.
+  </Accordion>
+  
+  <Accordion title="Testing Templates">
+    **Try before committing:**
+    
+    1. Test template on 1-2 images first
+    2. Review results carefully
+    3. Adjust if needed (retry or different template)
+    4. Apply to remaining images
+    
+    Saves time and ensures satisfaction.
+  </Accordion>
+</AccordionGroup>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Results don't match style">
+    **Possible Causes:**
+    
+    - Incorrect room type assigned
+    - Poor source image quality
+    - AI model variation
+    - Conflicting elements in original
+    
+    **Solutions:**
+    
+    ```typescript
+    // 1. Verify room type
+    const metadata = image.metadata as { roomType?: string };
+    console.log(metadata.roomType); // Check accuracy
+    
+    // 2. Retry processing
+    await retryImageProcessing(imageId);
+    
+    // 3. Try different template
+    await updateProject({ styleTemplateId: newTemplateId });
+    ```
+  </Accordion>
+  
+  <Accordion title="Template not available">
+    **"Coming Soon" templates:**
+    
+    ```typescript
+    const template = getTemplateById("modern-luxury");
+    if (template?.comingSoon) {
+      // Template exists but not yet released
+    }
+    ```
+    
+    Check back regularly for new template releases.
+  </Accordion>
+  
+  <Accordion title="Architectural elements changed">
+    **If AI modified structure:**
+    
+    This shouldn't happen due to preservation rules, but if it does:
+    
+    1. Retry processing (different random seed)
+    2. Use inpainting to fix specific areas
+    3. Report issue to support
+    
+    ```typescript
+    // Preservation should prevent this
+    const preserveStructure = 
+      "Do not move, remove, or modify windows, walls, doors...";
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Template Roadmap
+
+<Info>
+Upcoming template additions:
+</Info>
+
+### Q1 2025
+- Modern Luxury
+- Coastal
+- Industrial
+- Mid-Century Modern
+
+### Q2 2025
+- Traditional/Classic
+- Farmhouse
+- Minimalist
+- Bohemian
+
+### Q3 2025
+- Art Deco
+- Contemporary
+- Rustic
+- Eclectic
+
+### Custom Templates
+- Template builder tool
+- Prompt testing interface
+- Template marketplace
+- Community sharing

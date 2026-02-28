@@ -1,0 +1,578 @@
+---
+title: 'Database Setup'
+description: 'Guide to database configuration, schema management, and Drizzle ORM usage'
+---
+
+## Overview
+
+AI Studio uses **PostgreSQL** as its primary database and **Drizzle ORM** for type-safe database operations. This guide covers database setup, schema management, and common operations.
+
+## Database Stack
+
+- **Database**: PostgreSQL 15+
+- **ORM**: Drizzle ORM 0.45+
+- **Hosting**: Supabase (recommended) or self-hosted PostgreSQL
+- **Connection**: Transaction pooler (port 6543) for serverless compatibility
+
+## Quick Setup
+
+<Steps>
+  <Step title="Configure database connection">
+    Add your PostgreSQL connection string to `.env.local`:
+    ```env
+    DATABASE_URL=postgresql://postgres.xxxx:password@aws-0-region.pooler.supabase.com:6543/postgres
+    ```
+    
+    For Supabase, use the **Transaction** pooler URL (port 6543).
+  </Step>
+
+  <Step title="Push schema to database">
+    Create all database tables from the Drizzle schema:
+    ```bash
+    pnpm db:push
+    ```
+    
+    This command reads `lib/db/schema.ts` and syncs it to your database.
+  </Step>
+
+  <Step title="Verify setup">
+    Open Drizzle Studio to inspect your database:
+    ```bash
+    pnpm db:studio
+    ```
+    
+    This launches a web UI at `https://local.drizzle.studio`
+  </Step>
+</Steps>
+
+## Drizzle Configuration
+
+AI Studio's Drizzle configuration is defined in `drizzle.config.ts`:
+
+```typescript title="drizzle.config.ts"
+import { defineConfig } from "drizzle-kit";
+
+export default defineConfig({
+  dialect: "postgresql",
+  schema: "./lib/db/schema.ts",
+  out: "./drizzle",
+  dbCredentials: {
+    url: process.env.DATABASE_URL!,
+  },
+});
+```
+
+**Configuration breakdown:**
+- `dialect`: Database type (PostgreSQL)
+- `schema`: Location of schema definitions
+- `out`: Directory for generated migrations
+- `dbCredentials.url`: Connection string from environment
+
+## Database Client
+
+The database client is configured in `lib/db/index.ts`:
+
+```typescript title="lib/db/index.ts"
+import { drizzle } from "drizzle-orm/postgres-js";
+import postgres from "postgres";
+import * as schema from "./schema";
+
+// Supabase Transaction mode (port 6543) requires prepare: false
+const client = postgres(process.env.DATABASE_URL!, { prepare: false });
+
+export const db = drizzle(client, { schema });
+```
+
+<Note>
+  The `prepare: false` option is required when using Supabase's Transaction pooler (port 6543) because prepared statements are not supported in transaction pooling mode.
+</Note>
+
+**Why `prepare: false`?**
+- Supabase Transaction pooler doesn't support prepared statements
+- Required for serverless environments (Vercel, Netlify)
+- Minimal performance impact for typical query patterns
+
+## Database Commands
+
+AI Studio provides several npm scripts for database operations:
+
+### Schema Push (Development)
+
+```bash
+pnpm db:push
+```
+
+**What it does:**
+- Reads schema from `lib/db/schema.ts`
+- Applies changes directly to database
+- Creates/modifies tables, columns, indexes
+- No migration files generated
+
+**When to use:**
+- Local development and prototyping
+- Quick schema iterations
+- Initial database setup
+
+<Warning>
+  Schema push does not create migration files. For production deployments, use migration-based workflow with `db:generate` and `db:migrate`.
+</Warning>
+
+### Generate Migrations
+
+```bash
+pnpm db:generate
+```
+
+**What it does:**
+- Compares `lib/db/schema.ts` to current database state
+- Generates SQL migration files in `drizzle/` directory
+- Creates timestamped migration files
+- Preserves migration history
+
+**When to use:**
+- Before deploying to production
+- When working in teams (commit migrations to Git)
+- When you need rollback capability
+
+**Example output:**
+```
+drizzle/
+├── 0000_init_schema.sql
+├── 0001_add_video_table.sql
+└── 0002_add_workspace_members.sql
+```
+
+### Apply Migrations
+
+```bash
+pnpm db:migrate
+```
+
+**What it does:**
+- Runs pending migrations from `drizzle/` directory
+- Updates database schema to latest version
+- Tracks applied migrations in database
+
+**When to use:**
+- Production deployments
+- CI/CD pipelines
+- Team environments with shared migrations
+
+### Drizzle Studio
+
+```bash
+pnpm db:studio
+```
+
+**What it does:**
+- Launches web-based database GUI
+- Provides visual schema explorer
+- Allows data browsing and editing
+- Shows table relationships
+
+**Features:**
+- View all tables and relationships
+- Browse and filter data
+- Run custom SQL queries
+- Edit records inline
+- Export data as JSON/CSV
+
+<Tip>
+  Drizzle Studio is excellent for debugging and exploring your database schema during development.
+</Tip>
+
+## Database Schema
+
+The complete database schema is defined in `lib/db/schema.ts`. Here's an overview of the main tables:
+
+### Core Tables
+
+```typescript
+// Users (managed by Better Auth)
+- id: text (primary key)
+- email: text (unique)
+- name: text
+- createdAt: timestamp
+- updatedAt: timestamp
+
+// Workspaces
+- id: text (primary key)
+- name: text
+- slug: text (unique)
+- ownerId: text (foreign key → users)
+- createdAt: timestamp
+
+// Projects
+- id: text (primary key)
+- name: text
+- workspaceId: text (foreign key → workspaces)
+- userId: text (foreign key → users)
+- status: text (pending, processing, completed, failed)
+- createdAt: timestamp
+
+// Images
+- id: text (primary key)
+- projectId: text (foreign key → projects)
+- originalUrl: text
+- editedUrl: text (nullable)
+- status: text
+- styleTemplate: text
+- createdAt: timestamp
+```
+
+### Relationships
+
+```
+users
+  ├── workspaces (one-to-many)
+  ├── projects (one-to-many)
+  └── workspace_members (one-to-many)
+
+workspaces
+  ├── projects (one-to-many)
+  ├── members (many-to-many via workspace_members)
+  └── invitations (one-to-many)
+
+projects
+  └── images (one-to-many)
+```
+
+## Common Operations
+
+### Querying Data
+
+```typescript title="Example: Fetch user projects"
+import { db } from "@/lib/db";
+import { projects, images } from "@/lib/db/schema";
+import { eq } from "drizzle-orm";
+
+// Get all projects for a user
+const userProjects = await db
+  .select()
+  .from(projects)
+  .where(eq(projects.userId, userId));
+
+// Get project with images (with relation)
+const projectWithImages = await db.query.projects.findFirst({
+  where: eq(projects.id, projectId),
+  with: {
+    images: true,
+  },
+});
+```
+
+### Inserting Data
+
+```typescript title="Example: Create new project"
+import { db } from "@/lib/db";
+import { projects } from "@/lib/db/schema";
+
+const newProject = await db
+  .insert(projects)
+  .values({
+    id: nanoid(),
+    name: "Modern Living Room",
+    workspaceId: workspaceId,
+    userId: userId,
+    status: "pending",
+  })
+  .returning();
+```
+
+### Updating Data
+
+```typescript title="Example: Update project status"
+import { db } from "@/lib/db";
+import { projects } from "@/lib/db/schema";
+import { eq } from "drizzle-orm";
+
+await db
+  .update(projects)
+  .set({ status: "completed" })
+  .where(eq(projects.id, projectId));
+```
+
+### Deleting Data
+
+```typescript title="Example: Delete project"
+import { db } from "@/lib/db";
+import { projects } from "@/lib/db/schema";
+import { eq } from "drizzle-orm";
+
+await db
+  .delete(projects)
+  .where(eq(projects.id, projectId));
+```
+
+## Migration Workflow
+
+### Development Workflow
+
+For rapid local development:
+
+<Steps>
+  <Step title="Modify schema">
+    Edit `lib/db/schema.ts` to add/modify tables:
+    ```typescript
+    export const videos = pgTable("videos", {
+      id: text("id").primaryKey(),
+      projectId: text("project_id").references(() => projects.id),
+      // ... more columns
+    });
+    ```
+  </Step>
+
+  <Step title="Push changes">
+    ```bash
+    pnpm db:push
+    ```
+    Changes are applied immediately to your local database.
+  </Step>
+
+  <Step title="Verify in Studio">
+    ```bash
+    pnpm db:studio
+    ```
+    Inspect the new table structure.
+  </Step>
+</Steps>
+
+### Production Workflow
+
+For team collaboration and production deployments:
+
+<Steps>
+  <Step title="Modify schema">
+    Edit `lib/db/schema.ts` with your changes.
+  </Step>
+
+  <Step title="Generate migration">
+    ```bash
+    pnpm db:generate
+    ```
+    Creates a migration file in `drizzle/` directory.
+  </Step>
+
+  <Step title="Review migration">
+    Check the generated SQL in `drizzle/0001_*.sql`:
+    ```sql
+    CREATE TABLE IF NOT EXISTS "videos" (
+      "id" text PRIMARY KEY NOT NULL,
+      "project_id" text,
+      -- ...
+    );
+    ```
+  </Step>
+
+  <Step title="Apply migration">
+    ```bash
+    pnpm db:migrate
+    ```
+    Runs the migration against your database.
+  </Step>
+
+  <Step title="Commit to Git">
+    ```bash
+    git add drizzle/ lib/db/schema.ts
+    git commit -m "feat: add videos table"
+    ```
+  </Step>
+</Steps>
+
+## Database Providers
+
+### Supabase (Recommended)
+
+<Tabs>
+  <Tab title="Setup">
+    <Steps>
+      <Step title="Create project">
+        1. Go to [supabase.com/dashboard](https://supabase.com/dashboard)
+        2. Click "New Project"
+        3. Choose a name, password, and region
+        4. Wait for provisioning (~2 minutes)
+      </Step>
+
+      <Step title="Get connection string">
+        1. Go to Settings → Database
+        2. Scroll to "Connection string"
+        3. Select "Transaction" mode (port 6543)
+        4. Copy the connection string
+      </Step>
+
+      <Step title="Configure AI Studio">
+        Add to `.env.local`:
+        ```env
+        DATABASE_URL=postgresql://postgres.[ref]:[password]@[region].pooler.supabase.com:6543/postgres
+        ```
+      </Step>
+    </Steps>
+  </Tab>
+
+  <Tab title="Benefits">
+    - Free tier: 500MB database, 1GB bandwidth
+    - Automatic backups (paid plans)
+    - Built-in connection pooling
+    - Web-based SQL editor
+    - Integrated authentication
+    - Real-time subscriptions
+  </Tab>
+
+  <Tab title="Pricing">
+    - **Free**: $0/month - 500MB database, 1GB bandwidth
+    - **Pro**: $25/month - 8GB database, 50GB bandwidth
+    - **Team**: $599/month - Dedicated resources
+  </Tab>
+</Tabs>
+
+### Local PostgreSQL
+
+<Tabs>
+  <Tab title="macOS">
+    Using Homebrew:
+    ```bash
+    brew install postgresql@15
+    brew services start postgresql@15
+    createdb proppi_dev
+    ```
+    
+    Connection string:
+    ```env
+    DATABASE_URL=postgresql://localhost:5432/proppi_dev
+    ```
+  </Tab>
+
+  <Tab title="Linux">
+    Using apt:
+    ```bash
+    sudo apt update
+    sudo apt install postgresql postgresql-contrib
+    sudo systemctl start postgresql
+    sudo -u postgres createdb proppi_dev
+    ```
+    
+    Connection string:
+    ```env
+    DATABASE_URL=postgresql://postgres:password@localhost:5432/proppi_dev
+    ```
+  </Tab>
+
+  <Tab title="Docker">
+    Using Docker Compose:
+    ```yaml title="docker-compose.yml"
+    version: '3.8'
+    services:
+      postgres:
+        image: postgres:15-alpine
+        environment:
+          POSTGRES_DB: proppi_dev
+          POSTGRES_PASSWORD: password
+        ports:
+          - "5432:5432"
+        volumes:
+          - postgres_data:/var/lib/postgresql/data
+    volumes:
+      postgres_data:
+    ```
+    
+    ```bash
+    docker-compose up -d
+    ```
+    
+    Connection string:
+    ```env
+    DATABASE_URL=postgresql://postgres:password@localhost:5432/proppi_dev
+    ```
+  </Tab>
+</Tabs>
+
+## Troubleshooting
+
+### Connection Errors
+
+**Error: "connect ECONNREFUSED"**
+- Verify PostgreSQL is running
+- Check port in connection string (6543 for Supabase, 5432 for local)
+- Ensure no firewall blocking the connection
+
+**Error: "password authentication failed"**
+- Verify password in `DATABASE_URL`
+- URL-encode special characters: `@` → `%40`, `#` → `%23`
+- For Supabase, reset database password in dashboard
+
+**Error: "prepared statement not supported"**
+- Add `{ prepare: false }` to postgres client options
+- Verify you're using Transaction pooler (port 6543) not Session pooler
+
+### Schema Sync Issues
+
+**Schema push fails with "relation already exists"**
+```bash
+# Drop and recreate database (local only!)
+dropdb proppi_dev
+createb proppi_dev
+pnpm db:push
+```
+
+**Migration conflicts**
+```bash
+# Reset migrations (local only!)
+rm -rf drizzle/
+pnpm db:generate
+pnpm db:migrate
+```
+
+### Performance Issues
+
+**Slow queries**
+- Add indexes to frequently queried columns
+- Use `EXPLAIN ANALYZE` to debug query plans
+- Enable connection pooling (Supabase Transaction mode)
+
+**Connection pool exhausted**
+- Increase pool size in Supabase dashboard
+- Close connections properly in server actions
+- Consider using Session pooler for long-running queries
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Use migrations for production">
+    - Always generate and commit migrations for production changes
+    - Test migrations on staging before production
+    - Keep migrations small and focused
+    - Never edit migration files after they've been applied
+  </Accordion>
+
+  <Accordion title="Type safety">
+    - Let Drizzle infer types from schema
+    - Use `typeof schema.tableName.$inferSelect` for row types
+    - Use `typeof schema.tableName.$inferInsert` for insert types
+    - Avoid manual type casting
+  </Accordion>
+
+  <Accordion title="Query optimization">
+    - Use `with` for eager loading relations
+    - Add indexes on foreign keys and frequently queried columns
+    - Use `limit()` for pagination
+    - Batch operations when possible
+  </Accordion>
+
+  <Accordion title="Schema design">
+    - Use `text` for IDs (nanoid) instead of auto-increment
+    - Add `createdAt` and `updatedAt` timestamps
+    - Use `notNull()` for required fields
+    - Define foreign key constraints for data integrity
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="API Reference" icon="code" href="/api-reference/introduction">
+    Learn how to use database queries in API routes and server actions
+  </Card>
+  <Card title="Deployment" icon="rocket" href="/development/deployment">
+    Deploy your database and application to production
+  </Card>
+</CardGroup>

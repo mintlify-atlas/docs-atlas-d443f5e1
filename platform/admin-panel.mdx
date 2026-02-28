@@ -1,0 +1,432 @@
+---
+title: "Admin Panel"
+description: "System administration interface for managing workspaces, users, and billing"
+---
+
+## Overview
+
+The admin panel at `/admin` provides system administrators with tools to manage the entire platform. Access is restricted to users with `isSystemAdmin: true`.
+
+## Authentication & Authorization
+
+### System Admin Flag
+
+Defined in user schema at `lib/db/schema.ts:68`:
+
+```typescript
+export const user = pgTable("user", {
+  id: text("id").primaryKey(),
+  email: text("email").notNull().unique(),
+  
+  // System admin flag (for super admin access across all workspaces)
+  isSystemAdmin: boolean("is_system_admin").notNull().default(false),
+  
+  // User can also be banned
+  banned: boolean("banned").notNull().default(false),
+  banReason: text("ban_reason"),
+  banExpires: timestamp("ban_expires"),
+});
+```
+
+### Access Control
+
+Implemented in `lib/admin-auth.ts`:
+
+```typescript
+export async function requireSystemAdmin() {
+  const session = await auth.api.getSession({ headers: await headers() });
+  
+  if (!session) {
+    redirect("/sign-in?callbackUrl=/admin");
+  }
+  
+  const [currentUser] = await db
+    .select({ isSystemAdmin: user.isSystemAdmin })
+    .from(user)
+    .where(eq(user.id, session.user.id))
+    .limit(1);
+  
+  if (!currentUser?.isSystemAdmin) {
+    redirect("/dashboard"); // Non-admins get redirected
+  }
+  
+  return { session, userId: currentUser.id };
+}
+```
+
+<Warning>
+Only users with `isSystemAdmin: true` can access `/admin` routes. This flag must be set directly in the database.
+</Warning>
+
+### Setting Initial Admin
+
+Manually promote a user to system admin:
+
+```sql
+UPDATE "user" 
+SET is_system_admin = true 
+WHERE email = 'admin@yourdomain.com';
+```
+
+## Admin Layout
+
+Defined in `app/admin/layout.tsx:13`:
+
+```typescript
+export default async function AdminLayout({ children }: { children: React.ReactNode }) {
+  // Verify system admin access - redirects if not authorized
+  await requireSystemAdmin();
+  
+  return (
+    <div className="min-h-screen bg-background">
+      <ImpersonationBanner />
+      <AdminHeader />
+      <main className="w-full py-6">{children}</main>
+      <Toaster />
+    </div>
+  );
+}
+```
+
+Every admin page automatically:
+- Checks system admin status
+- Shows impersonation banner (if active)
+- Renders admin navigation header
+
+## Admin Sections
+
+### Dashboard (`/admin`)
+
+Overview with key metrics:
+- Total workspaces
+- Active users
+- Monthly revenue
+- Recent activity
+
+### Workspaces (`/admin/workspaces`)
+
+Manage all customer workspaces:
+
+**List View:**
+- Search and filter workspaces
+- View plan and status
+- Quick actions (suspend, edit)
+
+**Detail View** (`/admin/workspaces/[id]`):
+
+Implemented in `app/admin/workspaces/[id]/page.tsx`:
+
+```typescript
+export default async function AdminWorkspaceDetailPage({ params }: PageProps) {
+  await requireSystemAdmin();
+  const { id } = await params;
+  
+  const data = await getAdminWorkspaceDetail(id);
+  
+  return <WorkspaceDetailContent workspace={data} />;
+}
+```
+
+**Features:**
+- Edit workspace details
+- Change plan (free/pro/enterprise)
+- Update status (active/suspended/trial)
+- Toggle invoice eligibility
+- View usage statistics
+- Manage workspace members
+- Impersonate workspace owner
+
+### Users (`/admin/users`)
+
+Manage all platform users:
+
+**List View:**
+- Search by name or email
+- Filter by role or workspace
+- View last login time
+
+**Detail View** (`/admin/users/[id]`):
+- User profile and activity
+- Ban/unban users
+- Reset passwords
+- Change user roles
+- View user's projects
+
+**User Roles:**
+
+From `lib/db/schema.ts:428`:
+
+```typescript
+export type UserRole = "owner" | "admin" | "member";
+```
+
+- **Owner** - Full workspace control, billing access
+- **Admin** - Can manage projects and users
+- **Member** - Can create and edit own projects
+
+### Billing (`/admin/billing`)
+
+Manage invoices and payments.
+
+**Stats Bar:**
+
+From `app/admin/billing/page.tsx:22`:
+
+```typescript
+const formattedStats = {
+  uninvoicedCount: stats.uninvoicedCount,
+  uninvoicedAmount: stats.uninvoicedAmountOre / 100,
+  pendingPayment: stats.pendingPaymentCount,
+  pendingPaymentAmount: stats.pendingPaymentAmountOre / 100,
+  invoicedThisMonth: stats.invoicedThisMonthCount,
+  invoicedAmountThisMonth: stats.invoicedThisMonthAmountOre / 100,
+};
+```
+
+**Uninvoiced Tab:**
+- Projects awaiting invoice generation
+- Group by workspace
+- Batch invoice creation
+- Export to Fiken accounting
+
+**Invoice History Tab:**
+- All generated invoices
+- Filter by status (draft/sent/paid/overdue)
+- View line items
+- Download PDFs
+- Sync with Fiken
+
+### Revenue (`/admin/revenue`)
+
+Analytics and reporting:
+- Revenue trends over time
+- Revenue by plan type
+- Top customers by spend
+- Payment method distribution
+
+### Affiliates (`/admin/affiliates`)
+
+Manage affiliate relationships:
+- Link referring workspace to referred workspace
+- Set commission percentage
+- Track affiliate earnings
+- Process payouts
+
+**Affiliate Schema:**
+
+From `lib/db/schema.ts:605`:
+
+```typescript
+export const affiliateRelationship = pgTable("affiliate_relationship", {
+  id: text("id").primaryKey(),
+  affiliateWorkspaceId: text("affiliate_workspace_id").notNull(),
+  referredWorkspaceId: text("referred_workspace_id").notNull(),
+  commissionPercent: integer("commission_percent").notNull().default(20),
+  isActive: boolean("is_active").notNull().default(true),
+});
+
+export const affiliateEarning = pgTable("affiliate_earning", {
+  id: text("id").primaryKey(),
+  affiliateWorkspaceId: text("affiliate_workspace_id").notNull(),
+  invoiceId: text("invoice_id").notNull(),
+  invoiceAmountOre: integer("invoice_amount_ore").notNull(),
+  commissionPercent: integer("commission_percent").notNull(),
+  earningAmountOre: integer("earning_amount_ore").notNull(),
+  status: text("status").notNull().default("pending"), // 'pending' | 'paid_out'
+});
+```
+
+## Admin Actions
+
+### Workspace Management
+
+#### Update Workspace Plan
+
+```typescript
+await db.update(workspace)
+  .set({ 
+    plan: "enterprise",
+    updatedAt: new Date(),
+  })
+  .where(eq(workspace.id, workspaceId));
+```
+
+#### Suspend Workspace
+
+```typescript
+await db.update(workspace)
+  .set({ 
+    status: "suspended",
+    suspendedAt: new Date(),
+    suspendedReason: "Payment overdue",
+  })
+  .where(eq(workspace.id, workspaceId));
+```
+
+#### Enable Invoice Billing
+
+From `lib/actions/payments.ts:393`:
+
+```typescript
+export async function setWorkspaceInvoiceEligibility(
+  workspaceId: string,
+  eligible: boolean
+): Promise<ActionResult<{ success: boolean }>> {
+  const adminCheck = await verifySystemAdmin();
+  if (adminCheck.error) {
+    return { success: false, error: adminCheck.error };
+  }
+  
+  await db.update(workspace)
+    .set({
+      invoiceEligible: eligible,
+      invoiceEligibleAt: eligible ? new Date() : null,
+    })
+    .where(eq(workspace.id, workspaceId));
+}
+```
+
+### User Management
+
+#### Ban User
+
+```typescript
+await db.update(user)
+  .set({ 
+    banned: true,
+    banReason: "Terms of service violation",
+    banExpires: null, // Permanent ban
+  })
+  .where(eq(user.id, userId));
+```
+
+#### Temporary Ban
+
+```typescript
+await db.update(user)
+  .set({ 
+    banned: true,
+    banReason: "Suspicious activity",
+    banExpires: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 days
+  })
+  .where(eq(user.id, userId));
+```
+
+## User Impersonation
+
+### How It Works
+
+Better-auth admin plugin provides impersonation tracking:
+
+```typescript
+export const session = pgTable("session", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull(),
+  
+  // Admin impersonation tracking (better-auth admin plugin)
+  impersonatedBy: text("impersonated_by").references(() => user.id),
+});
+```
+
+### Impersonation Banner
+
+From `app/admin/layout.tsx:23`:
+
+```tsx
+<ImpersonationBanner />
+```
+
+Shows prominent warning when admin is impersonating another user.
+
+<Warning>
+Impersonation gives full access to the user's account. Use only for debugging and support. All actions are logged with the admin's ID.
+</Warning>
+
+## Workspace Invitation System
+
+Admins can invite workspaces for special programs:
+
+```typescript
+export const workspace = pgTable("workspace", {
+  // Admin can manually invite workspaces (for beta, referrals, etc.)
+  invitedByAdmin: boolean("invited_by_admin").notNull().default(false),
+});
+```
+
+Invited workspaces may receive:
+- Extended trial period
+- Custom pricing
+- Priority support
+- Early access to features
+
+## Querying Admin Data
+
+### Get Workspace with Details
+
+Implemented in `lib/db/queries.ts`:
+
+```typescript
+export async function getAdminWorkspaceDetail(workspaceId: string) {
+  const workspace = await db.query.workspace.findFirst({
+    where: eq(schema.workspace.id, workspaceId),
+    with: {
+      members: true,
+      projects: {
+        limit: 10,
+        orderBy: (projects, { desc }) => [desc(projects.createdAt)],
+      },
+    },
+  });
+  
+  return workspace;
+}
+```
+
+### Get Billing Stats
+
+```typescript
+export async function getBillingStats() {
+  const [uninvoiced, pending, thisMonth, total] = await Promise.all([
+    // Uninvoiced line items
+    db.select({ count: count() })
+      .from(invoiceLineItem)
+      .where(eq(invoiceLineItem.status, "pending")),
+    
+    // Pending Stripe payments
+    db.select({ count: count() })
+      .from(projectPayment)
+      .where(eq(projectPayment.status, "pending")),
+    
+    // Invoices this month
+    db.select({ count: count() })
+      .from(invoice)
+      .where(sql`EXTRACT(MONTH FROM issue_date) = EXTRACT(MONTH FROM NOW())`),
+    
+    // Total invoiced
+    db.select({ sum: sum(invoice.totalAmountOre) })
+      .from(invoice),
+  ]);
+}
+```
+
+## Admin Navigation
+
+Implemented in `components/admin/admin-header.tsx`:
+
+```tsx
+const navItems = [
+  { href: "/admin", label: "Dashboard", icon: IconHome },
+  { href: "/admin/workspaces", label: "Workspaces", icon: IconBuilding },
+  { href: "/admin/users", label: "Users", icon: IconUsers },
+  { href: "/admin/billing", label: "Billing", icon: IconFileInvoice },
+  { href: "/admin/revenue", label: "Revenue", icon: IconChartBar },
+  { href: "/admin/affiliates", label: "Affiliates", icon: IconUsersGroup },
+];
+```
+
+## Related Topics
+
+- [Pricing & Plans](/platform/pricing) - Understanding plan tiers
+- [Billing & Payments](/platform/billing) - Payment processing
+- [White Label](/platform/white-label) - Enterprise branding
+- [API Reference](/api-reference/admin) - Admin API endpoints

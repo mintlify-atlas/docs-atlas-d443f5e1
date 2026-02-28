@@ -1,0 +1,316 @@
+---
+title: 'Environment Variables'
+description: 'Complete guide to configuring environment variables for AI Studio'
+---
+
+## Overview
+
+AI Studio uses environment variables to configure database connections, authentication, AI services, and third-party integrations. This guide documents all required and optional environment variables.
+
+<Warning>
+  Never commit `.env.local` or any file containing secrets to version control. These files are already included in `.gitignore`.
+</Warning>
+
+## Setup Process
+
+<Steps>
+  <Step title="Copy the example file">
+    ```bash
+    cp .env.example .env.local
+    ```
+  </Step>
+
+  <Step title="Fill in your values">
+    Update each variable with your actual credentials. See sections below for where to obtain each value.
+  </Step>
+
+  <Step title="Verify configuration">
+    Start the development server to ensure all variables are correctly configured:
+    ```bash
+    pnpm dev
+    ```
+  </Step>
+</Steps>
+
+## Required Variables
+
+These variables must be configured for AI Studio to function properly.
+
+### Database (Supabase)
+
+```env
+DATABASE_URL=postgresql://postgres.xxxx:password@aws-0-region.pooler.supabase.com:6543/postgres
+```
+
+**Where to get it:**
+1. Go to [Supabase Dashboard](https://supabase.com/dashboard)
+2. Select your project → Settings → Database
+3. Copy the **Transaction** pooler connection string (port 6543)
+4. Use the Transaction mode connection string for serverless compatibility
+
+<Note>
+  AI Studio uses Supabase Transaction pooler (port 6543) with `prepare: false` for compatibility with serverless functions. See `lib/db/index.ts:5-6`.
+</Note>
+
+**Format breakdown:**
+```
+postgresql://[user]:[password]@[host]:[port]/[database]
+```
+
+### Supabase Storage & Authentication
+
+```env
+NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_SECRET_KEY=sb_secret_your_supabase_secret_key_here
+```
+
+**Where to get them:**
+1. Supabase Dashboard → Settings → API
+2. **Project URL**: Copy the URL from "Configuration"
+3. **Secret Key**: Copy the `service_role` key under "Project API keys"
+
+<Warning>
+  The `SUPABASE_SECRET_KEY` bypasses Row Level Security (RLS). Only use it in server-side code, never expose it to the client.
+</Warning>
+
+### Authentication (Better Auth)
+
+```env
+BETTER_AUTH_SECRET=your_secret_key_here_min_32_characters
+BETTER_AUTH_URL=http://localhost:3000
+NEXT_PUBLIC_APP_URL=http://localhost:3000
+```
+
+**BETTER_AUTH_SECRET:**
+- Used for signing authentication tokens
+- Must be at least 32 characters long
+- Generate securely:
+```bash
+openssl rand -base64 32
+```
+
+**BETTER_AUTH_URL:**
+- Base URL where your application runs
+- Local: `http://localhost:3000`
+- Production: `https://yourdomain.com` (no trailing slash)
+
+**NEXT_PUBLIC_APP_URL:**
+- Public URL of your application
+- Used for redirects, emails, and OAuth callbacks
+- Must match your actual domain
+
+### AI Services (Fal.ai)
+
+```env
+FAL_API_KEY=your_fal_api_key_here
+```
+
+**Where to get it:**
+1. Sign up at [fal.ai](https://fal.ai/)
+2. Go to [Dashboard → API Keys](https://fal.ai/dashboard/keys)
+3. Create a new API key
+
+**Pricing:** ~$0.039 per image edit (as of 2026)
+
+**What it's used for:**
+- AI-powered image generation and editing
+- Real estate photo enhancement
+- Style template applications
+
+### Email (Resend)
+
+```env
+RESEND_API_KEY=re_your_resend_api_key_here
+```
+
+**Where to get it:**
+1. Sign up at [resend.com](https://resend.com/)
+2. Go to [API Keys](https://resend.com/api-keys)
+3. Create a new API key
+
+**What it's used for:**
+- Team member invitation emails
+- Password reset emails
+- Notification emails
+- Transaction confirmations
+
+### Background Jobs (Trigger.dev)
+
+```env
+TRIGGER_SECRET_KEY=tr_dev_your_trigger_secret_key
+```
+
+**Where to get it:**
+1. Sign up at [cloud.trigger.dev](https://cloud.trigger.dev)
+2. Create a new project
+3. Go to Settings → API Keys
+4. Copy your **DEV** secret key (starts with `tr_dev_`)
+
+<Note>
+  For local development, use the DEV key (`tr_dev_`). For production deployments, use the PROD key (`tr_prod_`).
+</Note>
+
+**What it's used for:**
+- AI image generation tasks (background processing)
+- Long-running workflows
+- Scheduled jobs
+- Webhook processing
+
+**Development requirement:**
+You must run `pnpm trigger` in a separate terminal for background jobs to process locally.
+
+## Optional Variables
+
+These variables enable additional features but are not required for basic functionality.
+
+### Accounting Integration (Fiken)
+
+```env
+# FIKEN_API_KEY=your_fiken_api_key_here
+# FIKEN_COMPANY_SLUG=your-company-slug
+```
+
+**What it's for:**
+- Norwegian cloud-based accounting system integration
+- Automated invoicing
+- Financial reporting
+
+**Where to get it:**
+1. Sign up at [fiken.no](https://fiken.no/)
+2. Go to Settings → API
+3. Generate an API key
+4. Find your company slug in your Fiken URL
+
+<Note>
+  Fiken integration is specifically designed for Norwegian businesses and is completely optional.
+</Note>
+
+## Environment-Specific Configuration
+
+### Local Development
+
+```env title=".env.local"
+DATABASE_URL=postgresql://postgres:password@localhost:5432/proppi_dev
+BETTER_AUTH_URL=http://localhost:3000
+NEXT_PUBLIC_APP_URL=http://localhost:3000
+TRIGGER_SECRET_KEY=tr_dev_xxxxxxxxxx  # Use DEV key
+```
+
+### Production (Vercel)
+
+```env title="Vercel Environment Variables"
+DATABASE_URL=postgresql://postgres.prod:password@aws-region.pooler.supabase.com:6543/postgres
+BETTER_AUTH_URL=https://yourdomain.com
+NEXT_PUBLIC_APP_URL=https://yourdomain.com
+TRIGGER_SECRET_KEY=tr_prod_xxxxxxxxxx  # Use PROD key
+```
+
+<Warning>
+  When deploying to Vercel, add environment variables through the Vercel Dashboard under Settings → Environment Variables. Never commit production secrets.
+</Warning>
+
+## Variable Reference
+
+Complete alphabetical reference of all environment variables:
+
+| Variable | Required | Description | Example |
+|----------|----------|-------------|----------|
+| `BETTER_AUTH_SECRET` | Yes | Secret key for signing auth tokens (32+ chars) | `openssl rand -base64 32` |
+| `BETTER_AUTH_URL` | Yes | Base URL where app runs | `http://localhost:3000` |
+| `DATABASE_URL` | Yes | PostgreSQL connection string (Transaction pooler) | `postgresql://user:pass@host:6543/db` |
+| `FAL_API_KEY` | Yes | Fal.ai API key for AI image processing | `fal_xxxxxxxx` |
+| `FIKEN_API_KEY` | No | Fiken accounting API key (Norwegian) | `fik_xxxxxxxx` |
+| `FIKEN_COMPANY_SLUG` | No | Company identifier in Fiken | `my-company` |
+| `NEXT_PUBLIC_APP_URL` | Yes | Public URL (for redirects, emails) | `https://yourdomain.com` |
+| `NEXT_PUBLIC_SUPABASE_URL` | Yes | Supabase project URL | `https://xxx.supabase.co` |
+| `RESEND_API_KEY` | Yes | Resend API key for email delivery | `re_xxxxxxxx` |
+| `SUPABASE_SECRET_KEY` | Yes | Supabase service role key (server-only) | `sb_secret_xxxxx` |
+| `TRIGGER_SECRET_KEY` | Yes | Trigger.dev secret key (dev or prod) | `tr_dev_xxxxxxxx` |
+
+## Security Best Practices
+
+<AccordionGroup>
+  <Accordion title="Never commit secrets to Git">
+    - `.env.local` is already in `.gitignore`
+    - Use `.env.example` as a template (without real values)
+    - Review commits before pushing to ensure no secrets leaked
+  </Accordion>
+
+  <Accordion title="Use different keys per environment">
+    - Separate API keys for development and production
+    - Rotate keys regularly (every 90 days recommended)
+    - Revoke old keys after rotation
+  </Accordion>
+
+  <Accordion title="Restrict API key permissions">
+    - Use read-only keys where possible
+    - Limit IP addresses (when supported)
+    - Set spending limits on paid APIs
+  </Accordion>
+
+  <Accordion title="Public vs Private variables">
+    - `NEXT_PUBLIC_*` variables are exposed to the browser
+    - Never prefix secrets with `NEXT_PUBLIC_`
+    - Server-only variables (like `SUPABASE_SECRET_KEY`) are safe
+  </Accordion>
+</AccordionGroup>
+
+## Troubleshooting
+
+### Variables Not Loading
+
+<Tabs>
+  <Tab title="Next.js Development">
+    1. Restart the dev server: `pnpm dev`
+    2. Verify file name is exactly `.env.local`
+    3. Check variables are in the root directory
+    4. Ensure no syntax errors (no quotes needed)
+  </Tab>
+
+  <Tab title="Vercel Deployment">
+    1. Go to Vercel Dashboard → Your Project → Settings
+    2. Click "Environment Variables"
+    3. Add each variable one by one
+    4. Select environment: Production, Preview, or Development
+    5. Redeploy after adding variables
+  </Tab>
+
+  <Tab title="Trigger.dev">
+    1. Variables must be set in Trigger.dev Dashboard
+    2. Go to Your Project → Settings → Environment Variables
+    3. Add variables separately for dev and prod environments
+    4. Redeploy workflows: `pnpm trigger:deploy`
+  </Tab>
+</Tabs>
+
+### Common Errors
+
+**Error: "DATABASE_URL is not defined"**
+- Verify `.env.local` exists in root directory
+- Check spelling: `DATABASE_URL` (not `DATABASE_URI`)
+- Restart dev server after adding variable
+
+**Error: "Failed to connect to Supabase"**
+- Use Transaction pooler URL (port 6543, not 5432)
+- Verify password doesn't contain special characters that need URL encoding
+- Check project isn't paused in Supabase dashboard
+
+**Error: "Better Auth secret must be at least 32 characters"**
+- Generate a new secret: `openssl rand -base64 32`
+- Ensure no extra spaces or line breaks in `.env.local`
+
+**Error: "Trigger.dev authentication failed"**
+- Use `tr_dev_` key for local development
+- Use `tr_prod_` key for production deployments
+- Verify key is active in Trigger.dev dashboard
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Database Setup" icon="database" href="/development/database">
+    Configure PostgreSQL and run migrations with Drizzle ORM
+  </Card>
+  <Card title="Deployment" icon="rocket" href="/development/deployment">
+    Deploy AI Studio to Vercel with proper environment configuration
+  </Card>
+</CardGroup>

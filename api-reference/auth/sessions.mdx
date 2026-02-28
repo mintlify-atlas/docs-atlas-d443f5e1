@@ -1,0 +1,628 @@
+---
+title: 'Session Management'
+description: 'Session lifecycle, refresh, and cleanup in AI Studio'
+---
+
+## Overview
+
+AI Studio uses secure, HTTP-only cookie-based sessions powered by Better Auth. Sessions are created on sign-in and automatically refreshed to keep users logged in.
+
+## Session Configuration
+
+Sessions are configured in `lib/auth.ts`:
+
+```typescript
+session: {
+  expiresIn: 60 * 60 * 24 * 7,  // 7 days (604800 seconds)
+  updateAge: 60 * 60 * 24       // 1 day (86400 seconds)
+}
+```
+
+<ParamField path="expiresIn" type="number">
+  Total session lifetime in seconds (7 days)
+</ParamField>
+
+<ParamField path="updateAge" type="number">
+  Age threshold for automatic session refresh (1 day)
+</ParamField>
+
+## Session Schema
+
+Sessions are stored in the `session` table with the following structure:
+
+```typescript
+session {
+  id: string              // Primary key (nanoid)
+  token: string           // Unique session token (stored in HTTP-only cookie)
+  userId: string          // Foreign key to user table
+  expiresAt: timestamp    // Session expiration time
+  ipAddress: string?      // IP address at session creation
+  userAgent: string?      // User agent at session creation
+  impersonatedBy: string? // Admin user ID if impersonating
+  createdAt: timestamp    // Session creation time
+  updatedAt: timestamp    // Last session update
+}
+```
+
+### Database Indexes
+
+```typescript
+index("session_userId_idx").on(table.userId)
+```
+
+This index optimizes lookups when retrieving all sessions for a specific user.
+
+## Session Lifecycle
+
+### 1. Session Creation
+
+Sessions are created when:
+- User signs in with email/password
+- User verifies their email (auto-sign-in)
+- Admin impersonates a user
+
+**Created by:** `POST /api/auth/sign-in/email`
+
+```json
+{
+  "session": {
+    "id": "ses_p9o8i7u6y5",
+    "token": "session_token_here",
+    "userId": "usr_a1b2c3d4e5",
+    "expiresAt": "2024-01-22T10:30:00Z",
+    "ipAddress": "192.168.1.1",
+    "userAgent": "Mozilla/5.0...",
+    "createdAt": "2024-01-15T10:30:00Z",
+    "updatedAt": "2024-01-15T10:30:00Z"
+  }
+}
+```
+
+<Note>
+  The session token is automatically set as an HTTP-only cookie named `better-auth.session_token`.
+</Note>
+
+### 2. Session Validation
+
+On each authenticated request, the session is validated:
+
+1. **Token Check**: Session token is extracted from the cookie
+2. **Expiration Check**: `expiresAt` is compared to current time
+3. **User Lookup**: Associated user is retrieved from database
+4. **Age Check**: If session age > `updateAge`, it's refreshed
+
+### 3. Session Refresh
+
+Sessions are automatically refreshed when:
+- Session is valid but older than `updateAge` (1 day)
+- User makes an authenticated request
+
+**Refresh behavior:**
+```typescript
+if (sessionAge > updateAge && session.expiresAt > now) {
+  // Extend expiration by another 7 days from now
+  session.expiresAt = now + expiresIn;
+  session.updatedAt = now;
+}
+```
+
+<Info>
+  This "sliding window" approach keeps active users logged in indefinitely, while inactive sessions expire after 7 days.
+</Info>
+
+### 4. Session Termination
+
+Sessions end when:
+- User signs out (`POST /api/auth/sign-out`)
+- Session expires (not accessed for 7 days)
+- User is banned or deleted
+- Admin ends impersonation session
+
+## Session Endpoints
+
+### Get Current Session
+
+<api-endpoint method="GET" endpoint="/api/auth/get-session" />
+
+Retrieve the current user session and user information.
+
+#### Headers
+
+<ParamField header="Cookie" type="string" required>
+  Session cookie (automatically sent by browser)
+</ParamField>
+
+#### Response
+
+<ResponseField name="session" type="object">
+  Current session information
+  
+  <Expandable title="properties">
+    <ResponseField name="id" type="string">
+      Session identifier
+    </ResponseField>
+    
+    <ResponseField name="userId" type="string">
+      Associated user ID
+    </ResponseField>
+    
+    <ResponseField name="token" type="string">
+      Session token (same as cookie value)
+    </ResponseField>
+    
+    <ResponseField name="expiresAt" type="timestamp">
+      Session expiration time (refreshed if old)
+    </ResponseField>
+    
+    <ResponseField name="ipAddress" type="string">
+      IP address from session creation
+    </ResponseField>
+    
+    <ResponseField name="userAgent" type="string">
+      User agent from session creation
+    </ResponseField>
+    
+    <ResponseField name="impersonatedBy" type="string | null">
+      Admin user ID if this is an impersonation session
+    </ResponseField>
+    
+    <ResponseField name="createdAt" type="timestamp">
+      Session creation time
+    </ResponseField>
+    
+    <ResponseField name="updatedAt" type="timestamp">
+      Last session refresh time
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="user" type="object">
+  Current user information (see [Authentication Overview](/api-reference/auth/overview))
+</ResponseField>
+
+#### Example Request
+
+```bash
+curl https://yourdomain.com/api/auth/get-session \
+  -H "Cookie: better-auth.session_token=ses_p9o8i7u6y5"
+```
+
+#### Example Response
+
+```json
+{
+  "session": {
+    "id": "ses_p9o8i7u6y5",
+    "userId": "usr_a1b2c3d4e5",
+    "token": "ses_p9o8i7u6y5",
+    "expiresAt": "2024-01-22T10:30:00Z",
+    "ipAddress": "192.168.1.1",
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+    "impersonatedBy": null,
+    "createdAt": "2024-01-15T10:30:00Z",
+    "updatedAt": "2024-01-16T14:20:00Z"
+  },
+  "user": {
+    "id": "usr_a1b2c3d4e5",
+    "email": "john@example.com",
+    "name": "John Doe",
+    "emailVerified": true,
+    "workspaceId": "wks_x9y8z7w6v5",
+    "role": "owner"
+  }
+}
+```
+
+---
+
+### List User Sessions
+
+<api-endpoint method="GET" endpoint="/api/auth/list-sessions" />
+
+Retrieve all active sessions for the current user.
+
+#### Headers
+
+<ParamField header="Cookie" type="string" required>
+  Session cookie for authentication
+</ParamField>
+
+#### Response
+
+<ResponseField name="sessions" type="array">
+  Array of session objects for the current user
+  
+  <Expandable title="session properties">
+    <ResponseField name="id" type="string">
+      Session identifier
+    </ResponseField>
+    
+    <ResponseField name="expiresAt" type="timestamp">
+      Session expiration time
+    </ResponseField>
+    
+    <ResponseField name="ipAddress" type="string">
+      IP address from session creation
+    </ResponseField>
+    
+    <ResponseField name="userAgent" type="string">
+      User agent from session creation
+    </ResponseField>
+    
+    <ResponseField name="createdAt" type="timestamp">
+      Session creation time
+    </ResponseField>
+    
+    <ResponseField name="updatedAt" type="timestamp">
+      Last session refresh time
+    </ResponseField>
+    
+    <ResponseField name="isCurrent" type="boolean">
+      Whether this is the current session
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+#### Example Request
+
+```bash
+curl https://yourdomain.com/api/auth/list-sessions \
+  -H "Cookie: better-auth.session_token=ses_p9o8i7u6y5"
+```
+
+#### Example Response
+
+```json
+{
+  "sessions": [
+    {
+      "id": "ses_p9o8i7u6y5",
+      "expiresAt": "2024-01-22T10:30:00Z",
+      "ipAddress": "192.168.1.1",
+      "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+      "createdAt": "2024-01-15T10:30:00Z",
+      "updatedAt": "2024-01-16T14:20:00Z",
+      "isCurrent": true
+    },
+    {
+      "id": "ses_x8y7z6w5v4",
+      "expiresAt": "2024-01-20T08:15:00Z",
+      "ipAddress": "192.168.1.50",
+      "userAgent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0)",
+      "createdAt": "2024-01-13T08:15:00Z",
+      "updatedAt": "2024-01-14T09:30:00Z",
+      "isCurrent": false
+    }
+  ]
+}
+```
+
+<Tip>
+  Use this endpoint to show users their active sessions and allow them to revoke sessions from other devices.
+</Tip>
+
+---
+
+### Revoke Session
+
+<api-endpoint method="POST" endpoint="/api/auth/revoke-session" />
+
+Revoke a specific session (sign out from a specific device).
+
+#### Headers
+
+<ParamField header="Cookie" type="string" required>
+  Session cookie for authentication
+</ParamField>
+
+#### Request Body
+
+<ParamField body="sessionId" type="string" required>
+  ID of the session to revoke
+</ParamField>
+
+#### Response
+
+<ResponseField name="success" type="boolean">
+  Whether the session was successfully revoked
+</ResponseField>
+
+#### Example Request
+
+```bash
+curl -X POST https://yourdomain.com/api/auth/revoke-session \
+  -H "Content-Type: application/json" \
+  -H "Cookie: better-auth.session_token=ses_p9o8i7u6y5" \
+  -d '{
+    "sessionId": "ses_x8y7z6w5v4"
+  }'
+```
+
+#### Example Response
+
+```json
+{
+  "success": true
+}
+```
+
+<Warning>
+  If you revoke your current session, you will be signed out immediately.
+</Warning>
+
+---
+
+### Revoke All Sessions
+
+<api-endpoint method="POST" endpoint="/api/auth/revoke-all-sessions" />
+
+Revoke all sessions except the current one (sign out from all other devices).
+
+#### Headers
+
+<ParamField header="Cookie" type="string" required>
+  Session cookie for authentication
+</ParamField>
+
+#### Response
+
+<ResponseField name="success" type="boolean">
+  Whether sessions were successfully revoked
+</ResponseField>
+
+<ResponseField name="revokedCount" type="number">
+  Number of sessions that were revoked
+</ResponseField>
+
+#### Example Request
+
+```bash
+curl -X POST https://yourdomain.com/api/auth/revoke-all-sessions \
+  -H "Cookie: better-auth.session_token=ses_p9o8i7u6y5"
+```
+
+#### Example Response
+
+```json
+{
+  "success": true,
+  "revokedCount": 3
+}
+```
+
+## Admin Impersonation Sessions
+
+The Better Auth admin plugin enables admins to impersonate users for support and debugging.
+
+### Impersonation Configuration
+
+```typescript
+plugins: [
+  admin({
+    impersonationSessionDuration: 60 * 60 * 24 // 1 day
+  })
+]
+```
+
+### Impersonation Session Fields
+
+<ParamField path="impersonatedBy" type="string">
+  User ID of the admin who created the impersonation session
+</ParamField>
+
+When an admin impersonates a user:
+1. A new session is created for the target user
+2. The `impersonatedBy` field is set to the admin's user ID
+3. Session duration is limited to 1 day (regardless of standard session settings)
+4. Admin can end impersonation to return to their own session
+
+### Security Considerations
+
+<AccordionGroup>
+  <Accordion title="Impersonation Audit Trail">
+    All impersonation sessions are logged with:
+    - Admin user ID in `impersonatedBy` field
+    - Original IP address and user agent
+    - Session creation and end times
+  </Accordion>
+  
+  <Accordion title="Limited Duration">
+    Impersonation sessions expire after 1 day, even if the admin is actively using the account.
+  </Accordion>
+  
+  <Accordion title="Permission Requirements">
+    Only users with `isSystemAdmin: true` can impersonate other users.
+  </Accordion>
+</AccordionGroup>
+
+## Session Security
+
+### HTTP-Only Cookies
+
+Sessions use HTTP-only cookies to prevent XSS attacks:
+
+```http
+Set-Cookie: better-auth.session_token=ses_p9o8i7u6y5; Path=/; HttpOnly; Secure; SameSite=Lax
+```
+
+<ParamField path="HttpOnly" type="boolean">
+  Cookie cannot be accessed via JavaScript (prevents XSS)
+</ParamField>
+
+<ParamField path="Secure" type="boolean">
+  Cookie only sent over HTTPS in production
+</ParamField>
+
+<ParamField path="SameSite" type="string">
+  Cookie only sent to same-site requests (prevents CSRF)
+</ParamField>
+
+### IP and User Agent Tracking
+
+Each session records:
+- **IP Address**: Client IP at session creation
+- **User Agent**: Browser/device information
+
+This enables:
+- Suspicious activity detection
+- Session management UI ("Chrome on Windows", "Safari on iPhone")
+- Geographic anomaly detection
+
+### Automatic Cleanup
+
+Expired sessions are automatically cleaned up by Better Auth's internal cleanup process, which:
+- Runs periodically in the background
+- Deletes sessions where `expiresAt < NOW()`
+- Prevents database bloat from old sessions
+
+## Client-Side Usage
+
+### React Hook
+
+Use the `useSession` hook to access session data in React components:
+
+```typescript
+import { useSession } from "@/lib/auth-client";
+
+function ProfilePage() {
+  const { data: session, isPending, error } = useSession();
+  
+  if (isPending) {
+    return <div>Loading...</div>;
+  }
+  
+  if (error || !session) {
+    return <div>Not authenticated</div>;
+  }
+  
+  return (
+    <div>
+      <h1>Welcome, {session.user.name}</h1>
+      <p>Session expires: {new Date(session.session.expiresAt).toLocaleString()}</p>
+    </div>
+  );
+}
+```
+
+### Session Data Structure
+
+```typescript
+type SessionData = {
+  session: {
+    id: string;
+    userId: string;
+    expiresAt: Date;
+    ipAddress: string | null;
+    userAgent: string | null;
+    impersonatedBy: string | null;
+    createdAt: Date;
+    updatedAt: Date;
+  };
+  user: {
+    id: string;
+    email: string;
+    name: string;
+    emailVerified: boolean;
+    workspaceId: string;
+    role: string;
+    isSystemAdmin: boolean;
+  };
+};
+```
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Session Refresh" icon="arrows-rotate">
+    Let Better Auth handle session refresh automatically. Don't manually extend sessions.
+  </Card>
+  
+  <Card title="Cookie Management" icon="cookie">
+    Never manually set or modify session cookies. Use Better Auth's built-in methods.
+  </Card>
+  
+  <Card title="Multi-Device Support" icon="mobile">
+    Allow users to manage sessions across devices using the list/revoke endpoints.
+  </Card>
+  
+  <Card title="Security Monitoring" icon="shield-halved">
+    Log and monitor session creation from unusual IPs or locations.
+  </Card>
+</CardGroup>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Session Not Refreshing">
+    **Symptom**: User gets logged out after 7 days despite being active
+    
+    **Causes**:
+    - Session cookie is not being sent with requests
+    - `updateAge` is not configured correctly
+    - Clock skew between server and database
+    
+    **Solution**:
+    - Verify `better-auth.session_token` cookie is present in requests
+    - Check session configuration in `lib/auth.ts`
+    - Ensure server and database times are synchronized
+  </Accordion>
+  
+  <Accordion title="Session Expires Immediately">
+    **Symptom**: User is signed out right after signing in
+    
+    **Causes**:
+    - `expiresIn` is set too low
+    - Server time is in the future
+    - Database timestamps are incorrect
+    
+    **Solution**:
+    - Verify `expiresIn` is set to 604800 (7 days)
+    - Check server system time
+    - Inspect `expiresAt` values in database
+  </Accordion>
+  
+  <Accordion title="Cannot Access Session Cookie">
+    **Symptom**: JavaScript cannot read session cookie
+    
+    **Causes**:
+    - This is expected behavior (HTTP-only cookies)
+    
+    **Solution**:
+    - Use `useSession()` hook or `GET /api/auth/get-session` to access session data
+    - Never try to read cookies directly in JavaScript
+  </Accordion>
+  
+  <Accordion title="Session Lost After Deployment">
+    **Symptom**: Users are signed out after deploying new code
+    
+    **Causes**:
+    - Database connection lost during deployment
+    - Session secret changed
+    - Cookie domain/path configuration changed
+    
+    **Solution**:
+    - Use zero-downtime deployments
+    - Never change `BETTER_AUTH_SECRET` in production
+    - Verify cookie configuration in `lib/auth.ts`
+  </Accordion>
+</AccordionGroup>
+
+## Related Resources
+
+<CardGroup cols={2}>
+  <Card title="Authentication Overview" icon="lock" href="/api-reference/auth/overview">
+    Complete authentication API reference
+  </Card>
+  
+  <Card title="User Management" icon="users" href="/api-reference/users">
+    Manage users and roles
+  </Card>
+  
+  <Card title="Better Auth Docs" icon="book" href="https://better-auth.com">
+    Official Better Auth documentation
+  </Card>
+  
+  <Card title="Authentication" icon="shield-halved" href="/development/authentication">
+    Platform authentication architecture
+  </Card>
+</CardGroup>

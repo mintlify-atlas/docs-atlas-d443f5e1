@@ -1,0 +1,221 @@
+---
+title: 'Create Project'
+api: 'POST /api/projects'
+description: 'Create a new AI photo editing project with specified style and room type'
+---
+
+## Overview
+
+Creates a new project in AI Studio. Projects group multiple image generations together and track the editing workflow. After creation, you can upload images to the project for AI-powered editing.
+
+## Authentication
+
+Requires an authenticated user session. The project will be created in the user's workspace.
+
+## Request
+
+<ParamField body="name" type="string" required>
+  The project name. This helps you identify and organize your projects.
+  
+  Example: `"123 Main Street - Living Room"`
+</ParamField>
+
+<ParamField body="styleTemplateId" type="string" required>
+  The ID of the style template to apply to images in this project. Style templates define the AI editing style (e.g., modern, classic, minimalist).
+  
+  Available templates are defined in `/lib/style-templates.ts`.
+</ParamField>
+
+<ParamField body="roomType" type="string">
+  Optional room type classification. Used for organizing and filtering projects.
+  
+  **Available values:**
+  - `living-room`
+  - `kitchen`
+  - `bedroom`
+  - `bathroom`
+  - `toilet`
+  - `hallway`
+  - `office`
+  - `laundry-room`
+  - `storage-room`
+  - `walk-in-closet`
+  - `sauna`
+  - `gym`
+  - `childrens-room`
+  - `pool-area`
+  - `dining-room`
+  - `tv-room`
+  - `library`
+  - `hobby-room`
+  - `utility-room`
+  - `pantry`
+  - `conservatory`
+  - `garage`
+  - `terrace`
+  - `garden`
+  - `landscape`
+  - `exterior`
+  - `other`
+</ParamField>
+
+### Request Body Example
+
+```json
+{
+  "name": "Sunset Villa - Master Bedroom",
+  "styleTemplateId": "modern-scandinavian",
+  "roomType": "bedroom"
+}
+```
+
+## Response
+
+Returns the created project object with status `pending`.
+
+<ResponseField name="success" type="boolean" required>
+  Indicates whether the project was created successfully.
+</ResponseField>
+
+<ResponseField name="data" type="object">
+  The created project object.
+  
+  <ResponseField name="data.id" type="string" required>
+    Unique project identifier (UUID format).
+  </ResponseField>
+  
+  <ResponseField name="data.workspaceId" type="string" required>
+    The workspace ID this project belongs to.
+  </ResponseField>
+  
+  <ResponseField name="data.userId" type="string" required>
+    The ID of the user who created the project.
+  </ResponseField>
+  
+  <ResponseField name="data.name" type="string" required>
+    The project name.
+  </ResponseField>
+  
+  <ResponseField name="data.styleTemplateId" type="string" required>
+    The style template ID applied to this project.
+  </ResponseField>
+  
+  <ResponseField name="data.roomType" type="string | null">
+    The room type classification, if provided.
+  </ResponseField>
+  
+  <ResponseField name="data.thumbnailUrl" type="string | null">
+    URL to the project thumbnail image. Initially `null`, automatically set to the first uploaded image.
+  </ResponseField>
+  
+  <ResponseField name="data.status" type="string" required>
+    Current project status. Will be `"pending"` for new projects.
+    
+    **Possible values:**
+    - `pending` - Project created, no images processed yet
+    - `processing` - At least one image is being processed
+    - `completed` - All images completed successfully
+    - `failed` - All images failed to process
+  </ResponseField>
+  
+  <ResponseField name="data.imageCount" type="number" required>
+    Total number of images in the project. Initially `0`.
+  </ResponseField>
+  
+  <ResponseField name="data.completedCount" type="number" required>
+    Number of successfully processed images. Initially `0`.
+  </ResponseField>
+  
+  <ResponseField name="data.createdAt" type="string" required>
+    ISO 8601 timestamp when the project was created.
+  </ResponseField>
+  
+  <ResponseField name="data.updatedAt" type="string" required>
+    ISO 8601 timestamp when the project was last updated.
+  </ResponseField>
+</ResponseField>
+
+<ResponseField name="error" type="string">
+  Error message if `success` is `false`.
+  
+  **Common errors:**
+  - `"Unauthorized"` - User not authenticated
+  - `"Workspace not found"` - User has no workspace assigned
+  - `"Name and style template are required"` - Missing required fields
+  - `"Failed to create project"` - Database error
+</ResponseField>
+
+### Success Response Example
+
+```json
+{
+  "success": true,
+  "data": {
+    "id": "a1b2c3d4-5678-90ab-cdef-1234567890ab",
+    "workspaceId": "ws_abc123",
+    "userId": "user_xyz789",
+    "name": "Sunset Villa - Master Bedroom",
+    "styleTemplateId": "modern-scandinavian",
+    "roomType": "bedroom",
+    "thumbnailUrl": null,
+    "status": "pending",
+    "imageCount": 0,
+    "completedCount": 0,
+    "createdAt": "2024-01-15T10:30:00.000Z",
+    "updatedAt": "2024-01-15T10:30:00.000Z"
+  }
+}
+```
+
+### Error Response Example
+
+```json
+{
+  "success": false,
+  "error": "Name and style template are required"
+}
+```
+
+## Implementation Details
+
+The project creation workflow:
+
+1. **Authentication Check** - Validates user session
+2. **Workspace Lookup** - Retrieves user's workspace ID from database
+3. **Validation** - Ensures required fields (name, styleTemplateId) are provided
+4. **Database Insert** - Creates project record with initial status `pending`
+5. **Cache Invalidation** - Revalidates `/dashboard` path
+
+### Database Schema
+
+Projects are stored in the `project` table with the following structure:
+
+```typescript
+{
+  id: string (UUID, primary key)
+  workspaceId: string (foreign key → workspace.id)
+  userId: string (foreign key → user.id)
+  name: string
+  styleTemplateId: string
+  roomType: string | null
+  thumbnailUrl: string | null
+  status: "pending" | "processing" | "completed" | "failed"
+  imageCount: number (denormalized count)
+  completedCount: number (denormalized count)
+  createdAt: timestamp
+  updatedAt: timestamp
+}
+```
+
+### Related Endpoints
+
+- Upload images to project: `POST /api/process-image`
+- Get project details: See [Get Project](/api-reference/projects/get)
+- List all projects: See [List Projects](/api-reference/projects/list)
+
+## Source Code Reference
+
+Implemented in:
+- Server Action: `/lib/actions/projects.ts:createProjectAction` (lines 28-77)
+- Database Query: `/lib/db/queries.ts:createProject` (lines 374-386)
+- Schema: `/lib/db/schema.ts:project` (lines 164-196)

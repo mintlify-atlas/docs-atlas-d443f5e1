@@ -1,0 +1,742 @@
+---
+title: 'Team Collaboration'
+description: 'Work together on real estate marketing projects with shared access and real-time updates'
+icon: 'users'
+---
+
+## Overview
+
+AI Studio enables real estate teams to collaborate efficiently on photo editing and video projects. Share workspaces, coordinate on projects, and maintain brand consistency across your organization.
+
+## User Roles & Permissions
+
+Team collaboration is built on a role-based access control system:
+
+```typescript
+// Source: lib/db/schema.ts
+export type UserRole = "owner" | "admin" | "member";
+
+export const user = pgTable("user", {
+  id: text("id").primaryKey(),
+  workspaceId: text("workspace_id"),
+  role: text("role").notNull().default("member"),
+});
+```
+
+### Permission Matrix
+
+<Tabs>
+  <Tab title="Owner">
+    **Full Administrative Access**
+    
+    | Action | Allowed |
+    |--------|--------|
+    | View all projects | ✅ |
+    | Edit all projects | ✅ |
+    | Delete projects | ✅ |
+    | Invite members | ✅ |
+    | Remove members | ✅ |
+    | Assign roles | ✅ |
+    | Manage billing | ✅ |
+    | Modify workspace settings | ✅ |
+    | Delete workspace | ✅ |
+    
+    <Note>
+    Every workspace must have at least one owner. Transfer ownership before removing the last owner.
+    </Note>
+  </Tab>
+  
+  <Tab title="Admin">
+    **Team Management**
+    
+    | Action | Allowed |
+    |--------|--------|
+    | View all projects | ✅ |
+    | Edit all projects | ✅ |
+    | Delete projects | ✅ |
+    | Invite members | ✅ |
+    | Remove members (non-owners) | ✅ |
+    | Assign member role | ✅ |
+    | Manage billing | ❌ |
+    | Modify workspace settings | ✅ |
+    | Delete workspace | ❌ |
+    
+    <Info>
+    Admins can manage day-to-day operations without access to billing or critical settings.
+    </Info>
+  </Tab>
+  
+  <Tab title="Member">
+    **Standard User**
+    
+    | Action | Allowed |
+    |--------|--------|
+    | View own projects | ✅ |
+    | View shared projects | ✅ |
+    | Edit own projects | ✅ |
+    | Delete own projects | ✅ |
+    | Invite members | ❌ |
+    | Remove members | ❌ |
+    | Assign roles | ❌ |
+    | Manage billing | ❌ |
+    | Modify workspace settings | ❌ |
+    | Delete workspace | ❌ |
+  </Tab>
+</Tabs>
+
+## Inviting Team Members
+
+Add colleagues to your workspace to collaborate:
+
+<Steps>
+  <Step title="Navigate to Team Settings">
+    From the dashboard, access **Workspace Settings** → **Team**.
+    
+    ```tsx
+    // Available to owners and admins only
+    {(user.role === "owner" || user.role === "admin") && (
+      <Button onClick={() => navigate("/settings/team")}>Team Settings</Button>
+    )}
+    ```
+  </Step>
+  
+  <Step title="Create Invitation">
+    Click **Invite Member** and fill in details:
+    
+    ```typescript
+    // Source: lib/db/schema.ts
+    export const invitation = pgTable("invitation", {
+      id: text("id").primaryKey(),
+      email: text("email").notNull(),
+      workspaceId: text("workspace_id").notNull(),
+      role: text("role").notNull().default("member"),
+      token: text("token").notNull().unique(),
+      expiresAt: timestamp("expires_at").notNull(),
+      acceptedAt: timestamp("accepted_at"),
+    });
+    ```
+    
+    **Required Information:**
+    - Email address
+    - Role (member, admin)
+    - Optional: Custom welcome message
+  </Step>
+  
+  <Step title="Send Email">
+    Recipient receives invitation email containing:
+    
+    - Workspace name
+    - Inviter's name
+    - Assigned role
+    - Acceptance link (valid 7 days)
+    
+    ```tsx
+    // Email template includes
+    <EmailTemplate>
+      <h1>You've been invited to {workspace.name}</h1>
+      <p>{inviter.name} invited you as a {role}</p>
+      <Button href={acceptUrl}>Accept Invitation</Button>
+    </EmailTemplate>
+    ```
+  </Step>
+  
+  <Step title="Accept Invitation">
+    User clicks link and:
+    
+    <Tabs>
+      <Tab title="Existing User">
+        - Signs in to their account
+        - Joined to workspace automatically
+        - Redirected to workspace dashboard
+      </Tab>
+      
+      <Tab title="New User">
+        - Creates new account
+        - Account linked to workspace
+        - Completes onboarding
+        - Redirected to workspace dashboard
+      </Tab>
+    </Tabs>
+  </Step>
+  
+  <Step title="Confirmation">
+    Once accepted:
+    
+    ```typescript
+    await updateInvitation(invitationId, {
+      acceptedAt: new Date(),
+    });
+    
+    await updateUser(userId, {
+      workspaceId: invitation.workspaceId,
+      role: invitation.role,
+    });
+    ```
+    
+    - User appears in team list
+    - Invitation marked as accepted
+    - User gains access to workspace resources
+  </Step>
+</Steps>
+
+### Managing Invitations
+
+<Tabs>
+  <Tab title="Pending Invitations">
+    View all sent invitations:
+    
+    ```tsx
+    <InvitationList>
+      {invitations.map(inv => (
+        <InvitationCard
+          email={inv.email}
+          role={inv.role}
+          status={inv.acceptedAt ? "accepted" : "pending"}
+          expiresAt={inv.expiresAt}
+          onResend={() => resendInvitation(inv.id)}
+          onCancel={() => cancelInvitation(inv.id)}
+        />
+      ))}
+    </InvitationList>
+    ```
+    
+    Actions:
+    - **Resend**: Send a new invitation email
+    - **Cancel**: Revoke the invitation
+    - **Change Role**: Update before acceptance
+  </Tab>
+  
+  <Tab title="Expired Invitations">
+    Invitations expire after 7 days:
+    
+    ```typescript
+    const isExpired = new Date() > invitation.expiresAt;
+    ```
+    
+    To reactivate:
+    1. Delete expired invitation
+    2. Send new invitation
+    
+    <Warning>
+    Expired invitation links cannot be used. Users must request a new invitation.
+    </Warning>
+  </Tab>
+</Tabs>
+
+## Project Sharing
+
+### Visibility Rules
+
+All projects are automatically visible to workspace members:
+
+```typescript
+// Source: lib/db/queries.ts
+export async function getProjects(workspaceId: string) {
+  // Returns ALL projects in workspace
+  return await db
+    .select()
+    .from(project)
+    .where(eq(project.workspaceId, workspaceId))
+    .orderBy(desc(project.createdAt));
+}
+```
+
+**Visibility by Role:**
+
+<CardGroup cols={3}>
+  <Card title="Owner" icon="eye">
+    - View all projects
+    - Edit all projects
+    - Delete any project
+  </Card>
+  
+  <Card title="Admin" icon="eye">
+    - View all projects
+    - Edit all projects
+    - Delete any project
+  </Card>
+  
+  <Card title="Member" icon="eye">
+    - View all projects
+    - Edit own projects
+    - Delete own projects
+  </Card>
+</CardGroup>
+
+### Project Ownership
+
+Each project tracks its creator:
+
+```typescript
+// Source: lib/db/schema.ts
+export const project = pgTable("project", {
+  id: text("id").primaryKey(),
+  workspaceId: text("workspace_id").notNull(),
+  userId: text("user_id").notNull(), // Project creator
+  name: text("name").notNull(),
+});
+```
+
+**Creator Identification:**
+
+```tsx
+// Source: components/dashboard/project-card.tsx
+<ProjectCard>
+  <div className="flex items-center gap-2">
+    <Avatar src={project.user.image} />
+    <span>{project.user.name}</span>
+    {project.userId === currentUser.id && (
+      <Badge>You</Badge>
+    )}
+  </div>
+</ProjectCard>
+```
+
+<Info>
+Project ownership helps team members identify who to contact about specific projects.
+</Info>
+
+## Real-Time Collaboration
+
+### Live Updates
+
+Dashboard automatically refreshes when projects change:
+
+```tsx
+// Source: app/dashboard/page.tsx
+export default async function DashboardPage() {
+  const projects = await getProjects(workspace.id);
+  const stats = await getProjectStats(workspace.id);
+  
+  return <DashboardContent projects={projects} stats={stats} />;
+}
+```
+
+**Automatic Refresh Triggers:**
+- Project status changes (pending → processing → completed)
+- New images added
+- Processing completion
+- Project creation/deletion
+
+### Concurrent Editing
+
+Multiple team members can work on different projects simultaneously:
+
+```typescript
+// Projects are isolated by ID
+// No locking mechanism needed
+// Each user's changes are independent
+```
+
+<Warning>
+**Editing Same Project**: If two users edit the same project simultaneously, last write wins. Coordinate with team members to avoid conflicts.
+</Warning>
+
+## Team Activity Feed
+
+### Recent Activity
+
+Track team actions in the dashboard:
+
+```tsx
+<ActivityFeed>
+  <Activity
+    user="John Doe"
+    action="created project"
+    target="Downtown Loft Photos"
+    timestamp="2 minutes ago"
+  />
+  <Activity
+    user="Jane Smith"
+    action="completed processing"
+    target="Suburban Home Video"
+    timestamp="15 minutes ago"
+  />
+  <Activity
+    user="Mike Johnson"
+    action="invited member"
+    target="sarah@example.com"
+    timestamp="1 hour ago"
+  />
+</ActivityFeed>
+```
+
+**Tracked Events:**
+- Project creation
+- Image uploads
+- Processing started/completed
+- Video generation
+- Team member changes
+- Settings updates
+
+## Workspace Statistics
+
+View team-wide metrics:
+
+```typescript
+// Source: lib/db/queries.ts
+export async function getProjectStats(workspaceId: string) {
+  const projects = await getProjects(workspaceId);
+  
+  return {
+    totalProjects: projects.length,
+    completedProjects: projects.filter(p => p.status === "completed").length,
+    processingProjects: projects.filter(p => p.status === "processing").length,
+    totalImages: projects.reduce((sum, p) => sum + p.imageCount, 0),
+  };
+}
+```
+
+<Tabs>
+  <Tab title="Project Stats">
+    ```tsx
+    // Source: components/dashboard/stats-bar.tsx
+    <StatsBar
+      totalProperties={stats.totalProjects}
+      activeProperties={stats.completedProjects}
+      totalEdits={stats.totalImages}
+    />
+    ```
+    
+    Metrics:
+    - Total projects
+    - Active projects
+    - Processing projects
+    - Failed projects
+  </Tab>
+  
+  <Tab title="Image Stats">
+    Track image processing across the workspace:
+    
+    - Total images uploaded
+    - Images processed
+    - Processing in progress
+    - Failed images
+    - Average processing time
+  </Tab>
+  
+  <Tab title="Video Stats">
+    Monitor video generation:
+    
+    - Total videos created
+    - Videos in progress
+    - Total runtime generated
+    - Average clips per video
+  </Tab>
+  
+  <Tab title="Team Stats">
+    Member activity metrics:
+    
+    - Total team members
+    - Projects per member
+    - Most active members
+    - Recent activity
+  </Tab>
+</Tabs>
+
+## Commenting & Feedback
+
+<Note>
+Comments and annotations are planned for a future release.
+</Note>
+
+**Planned Features:**
+- Image-level comments
+- @mentions for team members
+- Approval workflows
+- Version comments
+- Threaded discussions
+
+## Notifications
+
+### Email Notifications
+
+Team members receive emails for important events:
+
+<Tabs>
+  <Tab title="Project Events">
+    - Project processing completed
+    - Project failed with errors
+    - New images added by teammate
+    - Video generation completed
+    
+    ```tsx
+    // Email template
+    <EmailTemplate>
+      <h2>Project "{projectName}" is ready</h2>
+      <p>{user.name} completed processing {imageCount} images.</p>
+      <Button href={projectUrl}>View Project</Button>
+    </EmailTemplate>
+    ```
+  </Tab>
+  
+  <Tab title="Team Events">
+    - New member joined
+    - Member removed
+    - Role changed
+    - Invitation accepted
+  </Tab>
+  
+  <Tab title="Billing Events">
+    - Invoice generated
+    - Payment failed
+    - Subscription changed
+    - Usage limits approaching
+  </Tab>
+  
+  <Tab title="System Events">
+    - Workspace suspended
+    - Maintenance scheduled
+    - Feature announcements
+    - Security alerts
+  </Tab>
+</Tabs>
+
+### Notification Preferences
+
+<Note>
+Customizable notification settings coming soon. Currently, all critical notifications are enabled by default.
+</Note>
+
+## Team Management
+
+### Member List
+
+View all workspace members:
+
+```tsx
+<TeamMemberList>
+  {members.map(member => (
+    <MemberCard
+      key={member.id}
+      name={member.name}
+      email={member.email}
+      role={member.role}
+      avatar={member.image}
+      joinedAt={member.createdAt}
+      onChangeRole={(newRole) => updateMemberRole(member.id, newRole)}
+      onRemove={() => removeMember(member.id)}
+    />
+  ))}
+</TeamMemberList>
+```
+
+**Member Actions (Owner/Admin only):**
+- Change role
+- Remove member
+- View member activity
+- Resend invitation
+
+### Role Changes
+
+Modify member permissions:
+
+```typescript
+// Source: lib/actions.ts
+export async function updateMemberRole(
+  userId: string,
+  newRole: UserRole
+) {
+  // Verify permissions
+  const currentUser = await getCurrentUser();
+  if (currentUser.role !== "owner" && currentUser.role !== "admin") {
+    throw new Error("Insufficient permissions");
+  }
+  
+  // Cannot demote last owner
+  if (newRole !== "owner") {
+    const owners = await getWorkspaceOwners(currentUser.workspaceId);
+    if (owners.length === 1 && owners[0].id === userId) {
+      throw new Error("Cannot remove last owner");
+    }
+  }
+  
+  // Update role
+  await db
+    .update(user)
+    .set({ role: newRole })
+    .where(eq(user.id, userId));
+}
+```
+
+<Warning>
+**Last Owner Protection**: The system prevents removing the last owner. Transfer ownership to another member first.
+</Warning>
+
+### Removing Members
+
+Remove users from workspace:
+
+```typescript
+export async function removeMember(userId: string) {
+  const member = await getUserById(userId);
+  
+  // Transfer or delete member's projects
+  const memberProjects = await getUserProjects(userId);
+  
+  if (memberProjects.length > 0) {
+    // Option 1: Transfer to workspace owner
+    const owner = await getWorkspaceOwner(member.workspaceId);
+    await transferProjects(memberProjects, owner.id);
+    
+    // Option 2: Delete projects
+    // await deleteProjects(memberProjects);
+  }
+  
+  // Remove user from workspace
+  await db
+    .update(user)
+    .set({ workspaceId: null, role: "member" })
+    .where(eq(user.id, userId));
+}
+```
+
+**Project Handling Options:**
+1. Transfer projects to owner
+2. Transfer to another admin
+3. Delete projects (with confirmation)
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Role Assignment Strategy">
+    **Recommended Structure:**
+    
+    - **1-2 Owners**: C-level executives, business owners
+    - **2-5 Admins**: Team leads, project managers
+    - **Unlimited Members**: Staff, contractors
+    
+    **When to Promote:**
+    - Consistently manages projects
+    - Needs to invite team members
+    - Requires oversight access
+    - Handles client communications
+  </Accordion>
+  
+  <Accordion title="Project Organization">
+    Use consistent naming conventions:
+    
+    ```typescript
+    // Good naming
+    "[Client Name] - [Property Address] - [Date]"
+    "Smith Residence - 123 Main St - 2024-01"
+    
+    // Project tags (coming soon)
+    tags: ["luxury", "residential", "client:smith"]
+    ```
+    
+    Benefits:
+    - Easy to search
+    - Clear ownership
+    - Chronological sorting
+  </Accordion>
+  
+  <Accordion title="Communication Guidelines">
+    **In-App Communication (Planned):**
+    - Use comments for project feedback
+    - @mention relevant team members
+    - Keep discussions project-specific
+    
+    **External Communication:**
+    - Use email for urgent matters
+    - Slack/Teams for team chat
+    - Project management tools for tasks
+  </Accordion>
+  
+  <Accordion title="Access Control">
+    **Security Best Practices:**
+    
+    - Remove inactive members promptly
+    - Review roles quarterly
+    - Use strong passwords (enforce 2FA)
+    - Limit owner count
+    - Audit team changes
+    
+    ```typescript
+    // Automated reminders
+    if (member.lastActive > 90.days.ago) {
+      sendInactivityReminder(member);
+    }
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Invitation not received">
+    **Common Causes:**
+    
+    1. Email in spam folder
+    2. Typo in email address
+    3. Corporate email filter
+    4. Invitation already expired
+    
+    **Solutions:**
+    
+    ```typescript
+    // Resend invitation
+    await resendInvitation(invitationId);
+    
+    // Verify email
+    const invitation = await getInvitation(invitationId);
+    console.log(`Sent to: ${invitation.email}`);
+    ```
+    
+    - Check spam/junk folders
+    - Verify email address
+    - Whitelist sender domain
+    - Send to personal email as backup
+  </Accordion>
+  
+  <Accordion title="Cannot edit teammate's project">
+    **Permission Check:**
+    
+    ```typescript
+    const canEdit = 
+      currentUser.id === project.userId || // Project creator
+      currentUser.role === "owner" ||     // Workspace owner
+      currentUser.role === "admin";       // Workspace admin
+    ```
+    
+    **Solutions:**
+    - Ask admin to promote you
+    - Request project transfer
+    - Create your own copy
+  </Accordion>
+  
+  <Accordion title="Member still has access after removal">
+    **Session Persistence:**
+    
+    Active sessions remain valid until:
+    - User logs out
+    - Session expires (24 hours)
+    - Password reset
+    
+    **Force Logout:**
+    
+    ```typescript
+    // Invalidate all sessions
+    await db
+      .delete(session)
+      .where(eq(session.userId, removedUserId));
+    ```
+    
+    Contact support if immediate revocation is needed.
+  </Accordion>
+</AccordionGroup>
+
+## Future Collaboration Features
+
+<Info>
+These features are on the roadmap:
+</Info>
+
+- **Comments & Annotations**: Add feedback directly on images
+- **Approval Workflows**: Multi-stage review process
+- **Project Templates**: Reusable project configurations
+- **Shared Libraries**: Workspace-wide asset library
+- **Activity Dashboard**: Real-time collaboration view
+- **Version Control**: Track all project changes
+- **Client Portals**: Share projects with clients
+- **Mobile App**: Collaborate on the go

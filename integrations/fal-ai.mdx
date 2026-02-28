@@ -1,0 +1,255 @@
+---
+title: Fal.ai Integration
+description: AI-powered image and video generation using Fal.ai's models
+---
+
+## Overview
+
+Fal.ai provides the AI models for image editing and video generation in AI Studio. The platform uses three main models:
+
+- **Nano Banana Pro** - Fast image editing and enhancement
+- **Qwen Image Edit** - Advanced inpainting and masked editing
+- **Kling Video v2.6 Pro** - Image-to-video generation
+
+## Configuration
+
+### Environment Variables
+
+Add the following to your `.env.local` file:
+
+```bash
+# Get your API key from: https://fal.ai/dashboard/keys
+# Used for AI-powered image generation and editing
+# Pricing: ~$0.039 per image edit
+FAL_API_KEY=your_fal_api_key_here
+```
+
+### Setup Steps
+
+<Steps>
+  <Step title="Get API Key">
+    1. Sign up at [fal.ai](https://fal.ai)
+    2. Navigate to the [API Keys dashboard](https://fal.ai/dashboard/keys)
+    3. Create a new API key
+    4. Copy the key for use in your environment variables
+  </Step>
+
+  <Step title="Configure Client">
+    The Fal.ai client is configured in `lib/fal.ts`:
+
+    ```typescript lib/fal.ts
+    import { fal } from "@fal-ai/client";
+
+    // Configure Fal.ai client with API key
+    fal.config({
+      credentials: process.env.FAL_API_KEY!,
+    });
+
+    export { fal };
+    ```
+  </Step>
+
+  <Step title="Use in Workflows">
+    Fal.ai is primarily used in Trigger.dev background jobs:
+
+    ```typescript trigger/process-image.ts
+    import { fal, NANO_BANANA_PRO_EDIT } from "@/lib/fal";
+
+    // Upload image to Fal.ai storage
+    const falImageUrl = await fal.storage.upload(
+      new File([imageBlob], "input.jpg", { type: imageBlob.type })
+    );
+
+    // Process with Nano Banana Pro
+    const result = await fal.subscribe(NANO_BANANA_PRO_EDIT, {
+      input: {
+        prompt: image.prompt,
+        image_urls: [falImageUrl],
+        num_images: 1,
+        output_format: "jpeg",
+      },
+    });
+    ```
+  </Step>
+</Steps>
+
+## Available Models
+
+### Nano Banana Pro Edit
+
+Fast image editing model for real estate photo enhancement.
+
+**Model ID:** `fal-ai/nano-banana-pro/edit`
+
+**Input Parameters:**
+
+```typescript
+interface NanoBananaProInput {
+  prompt: string;
+  image_urls: string[]; // Array of image URLs
+  num_images?: number; // 1-4, default 1
+  aspect_ratio?: "21:9" | "16:9" | "3:2" | "4:3" | "5:4" | "1:1" | "4:5" | "3:4" | "2:3" | "9:16";
+  resolution?: "1K" | "2K" | "4K";
+  output_format?: "jpeg" | "png" | "webp";
+  sync_mode?: boolean;
+}
+```
+
+**Output:**
+
+```typescript
+interface NanoBananaProOutput {
+  images: Array<{
+    url: string;
+    file_name: string;
+    content_type: string;
+    file_size: number;
+    width: number;
+    height: number;
+  }>;
+  description?: string;
+}
+```
+
+### Qwen Image Edit Inpaint
+
+Advanced inpainting model for selective editing with masks.
+
+**Model ID:** `fal-ai/qwen-image-edit/inpaint`
+
+**Input Parameters:**
+
+```typescript
+interface QwenInpaintInput {
+  prompt: string; // What to generate in masked area
+  image_url: string; // Original image URL
+  mask_url: string; // Black/white mask (white = area to edit)
+  num_inference_steps?: number; // Default 30
+  guidance_scale?: number; // Default 4
+  seed?: number; // For reproducibility
+  output_format?: "jpeg" | "png";
+  negative_prompt?: string;
+  strength?: number; // Default 0.93
+  acceleration?: "none" | "regular" | "high";
+  enable_safety_checker?: boolean;
+  num_images?: number;
+}
+```
+
+### Kling Video v2.6 Pro
+
+Image-to-video generation for creating property walkthroughs.
+
+**Model ID:** `fal-ai/kling-video/v2.6/pro/image-to-video`
+
+**Input Parameters:**
+
+```typescript
+interface KlingVideoInput {
+  image_url: string; // Source image URL
+  tail_image_url?: string; // Optional end frame
+  prompt: string; // Motion description
+  duration?: "5" | "10"; // Video duration in seconds
+  aspect_ratio?: "16:9" | "9:16" | "1:1";
+  generate_audio?: boolean; // Generate native audio
+  negative_prompt?: string;
+  cfg_scale?: number; // 0-1, prompt adherence
+}
+```
+
+## Usage in Background Jobs
+
+Fal.ai is used in Trigger.dev tasks for async processing:
+
+### Image Processing
+
+See `trigger/process-image.ts` for the complete implementation:
+
+```typescript
+// 1. Upload to Fal.ai storage
+const imageResponse = await fetch(image.originalImageUrl);
+const imageBlob = await imageResponse.blob();
+const falImageUrl = await fal.storage.upload(
+  new File([imageBlob], "input.jpg", { type: imageBlob.type })
+);
+
+// 2. Call API
+const result = await fal.subscribe(NANO_BANANA_PRO_EDIT, {
+  input: {
+    prompt: image.prompt,
+    image_urls: [falImageUrl],
+    num_images: 1,
+    output_format: "jpeg",
+  },
+});
+
+// 3. Download and save result
+const resultImageUrl = result.images[0].url;
+const resultImageResponse = await fetch(resultImageUrl);
+const resultImageBuffer = await resultImageResponse.arrayBuffer();
+```
+
+### Video Generation
+
+See `trigger/generate-video-clip.ts` for the complete implementation:
+
+```typescript
+// Upload images to Fal.ai
+const falImageUrl = await fal.storage.upload(
+  new File([imageBlob], "source.jpg", { type: imageBlob.type })
+);
+
+// Generate video
+const result = await fal.subscribe(KLING_VIDEO_PRO, {
+  input: {
+    image_url: falImageUrl,
+    tail_image_url: falTailImageUrl,
+    prompt: motionPrompt,
+    duration: "5",
+    aspect_ratio: "16:9",
+    generate_audio: true,
+    negative_prompt: DEFAULT_NEGATIVE_PROMPT,
+  },
+  onQueueUpdate: (update) => {
+    logger.info("Kling processing update", { update });
+  },
+});
+```
+
+## Pricing
+
+Typical costs per operation (as of documentation):
+
+- **Nano Banana Pro Edit**: ~$0.039 per image
+- **Qwen Inpaint**: Variable based on steps and resolution
+- **Kling Video Pro**: Variable based on duration and resolution
+
+Check [Fal.ai pricing](https://fal.ai/pricing) for current rates.
+
+## Error Handling
+
+Always wrap Fal.ai calls in try-catch blocks:
+
+```typescript
+try {
+  const result = await fal.subscribe(MODEL_ID, { input });
+  
+  // Check for result
+  const output = result.data || result;
+  if (!output.images?.[0]?.url) {
+    throw new Error("No image returned from Fal.ai");
+  }
+} catch (error) {
+  logger.error("Fal.ai processing failed", {
+    error: error instanceof Error ? error.message : "Unknown error",
+  });
+  throw error;
+}
+```
+
+## Resources
+
+- [Fal.ai Documentation](https://fal.ai/docs)
+- [API Reference](https://fal.ai/models)
+- [Dashboard](https://fal.ai/dashboard)
+- [Pricing](https://fal.ai/pricing)

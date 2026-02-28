@@ -1,0 +1,452 @@
+---
+title: Trigger.dev Integration
+description: Background job processing for AI image and video generation
+---
+
+## Overview
+
+Trigger.dev handles all long-running AI processing tasks in AI Studio. It provides:
+
+- Reliable background job execution
+- Automatic retries with exponential backoff
+- Real-time progress tracking
+- Queue management for AI API calls
+
+## Configuration
+
+### Environment Variables
+
+Add the following to your `.env.local` file:
+
+```bash
+# Get from: https://cloud.trigger.dev → Your Project → Settings
+# Used for AI image generation tasks and background processing
+TRIGGER_SECRET_KEY=tr_dev_your_trigger_secret_key
+```
+
+### Setup Steps
+
+<Steps>
+  <Step title="Create Trigger.dev Account">
+    1. Sign up at [cloud.trigger.dev](https://cloud.trigger.dev)
+    2. Create a new project
+    3. Select the **v3** version (latest)
+  </Step>
+
+  <Step title="Get Secret Key">
+    1. Go to your project in the Trigger.dev dashboard
+    2. Navigate to **Settings → API Keys**
+    3. Copy the **Secret Key** (starts with `tr_dev_` for development)
+    4. Add to `.env.local` as `TRIGGER_SECRET_KEY`
+  </Step>
+
+  <Step title="Configure Project">
+    The configuration is in `trigger.config.ts`:
+
+    ```typescript trigger.config.ts
+    import { defineConfig } from "@trigger.dev/sdk/v3";
+
+    export default defineConfig({
+      project: "proj_mlrwhnuuhybejuglaunc",
+      runtime: "node",
+      logLevel: "log",
+      maxDuration: 3600, // 1 hour max
+      retries: {
+        enabledInDev: true,
+        default: {
+          maxAttempts: 3,
+          minTimeoutInMs: 1000,
+          maxTimeoutInMs: 10_000,
+          factor: 2,
+          randomize: true,
+        },
+      },
+      dirs: ["./trigger"],
+    });
+    ```
+
+    Update the `project` ID with your own project ID from the dashboard.
+  </Step>
+
+  <Step title="Run Locally">
+    Start the Trigger.dev development server:
+
+    ```bash
+    pnpm trigger
+    ```
+
+    This watches the `trigger/` directory and runs tasks locally.
+  </Step>
+</Steps>
+
+## Available Tasks
+
+AI Studio includes 6 background tasks in the `trigger/` directory:
+
+### Image Processing
+
+**Task:** `process-image`  
+**File:** `trigger/process-image.ts`  
+**Purpose:** Process images with Fal.ai Nano Banana Pro
+
+```typescript
+import { tasks } from "@trigger.dev/sdk/v3";
+
+// Trigger from API route
+const handle = await tasks.trigger<typeof processImageTask>(
+  "process-image",
+  { imageId: "img_123" }
+);
+```
+
+### Inpainting
+
+**Task:** `inpaint-image`  
+**File:** `trigger/inpaint-image.ts`  
+**Purpose:** Selective editing with Qwen Inpaint model
+
+### Video Generation
+
+**Task:** `generate-video-clip`  
+**File:** `trigger/generate-video-clip.ts`  
+**Purpose:** Generate video clips from images with Kling Video
+
+**Task:** `generate-transition-clip`  
+**File:** `trigger/generate-transition-clip.ts`  
+**Purpose:** Create transition clips between rooms
+
+**Task:** `compile-video`  
+**File:** `trigger/compile-video.ts`  
+**Purpose:** Compile clips into final video
+
+**Task:** `video-orchestrator`  
+**File:** `trigger/video-orchestrator.ts`  
+**Purpose:** Orchestrate the complete video generation pipeline
+
+## Task Structure
+
+All tasks follow a consistent pattern:
+
+```typescript
+import { logger, metadata, task } from "@trigger.dev/sdk/v3";
+
+export const myTask = task({
+  id: "my-task",
+  maxDuration: 300, // 5 minutes
+  retry: {
+    maxAttempts: 3,
+    minTimeoutInMs: 1000,
+    maxTimeoutInMs: 10_000,
+    factor: 2,
+  },
+  run: async (payload) => {
+    try {
+      // Update progress
+      metadata.set("status", {
+        step: "processing",
+        label: "Processing...",
+        progress: 50,
+      });
+
+      // Do work
+      logger.info("Processing", { payload });
+
+      // Return result
+      return { success: true };
+    } catch (error) {
+      logger.error("Failed", { error });
+      throw error;
+    }
+  },
+});
+```
+
+## Example: Image Processing Task
+
+From `trigger/process-image.ts`:
+
+```typescript
+import { logger, metadata, task } from "@trigger.dev/sdk/v3";
+import { fal, NANO_BANANA_PRO_EDIT } from "@/lib/fal";
+import { uploadImage, getImagePath } from "@/lib/supabase";
+
+export interface ProcessImagePayload {
+  imageId: string;
+}
+
+export const processImageTask = task({
+  id: "process-image",
+  maxDuration: 300, // 5 minutes
+  retry: {
+    maxAttempts: 3,
+    minTimeoutInMs: 1000,
+    maxTimeoutInMs: 10_000,
+    factor: 2,
+  },
+  run: async (payload: ProcessImagePayload) => {
+    const { imageId } = payload;
+
+    try {
+      // Step 1: Fetch image record
+      metadata.set("status", {
+        step: "fetching",
+        label: "Loading image…",
+        progress: 10,
+      });
+
+      const image = await getImageGenerationById(imageId);
+      if (!image) {
+        throw new Error(`Image not found: ${imageId}`);
+      }
+
+      // Step 2: Upload to Fal.ai
+      metadata.set("status", {
+        step: "uploading",
+        label: "Preparing for AI…",
+        progress: 25,
+      });
+
+      const imageResponse = await fetch(image.originalImageUrl);
+      const imageBlob = await imageResponse.blob();
+      const falImageUrl = await fal.storage.upload(
+        new File([imageBlob], "input.jpg", { type: imageBlob.type })
+      );
+
+      // Step 3: Process with AI
+      metadata.set("status", {
+        step: "processing",
+        label: "Enhancing image…",
+        progress: 50,
+      });
+
+      const result = await fal.subscribe(NANO_BANANA_PRO_EDIT, {
+        input: {
+          prompt: image.prompt,
+          image_urls: [falImageUrl],
+          num_images: 1,
+          output_format: "jpeg",
+        },
+      });
+
+      // Step 4: Save result
+      metadata.set("status", {
+        step: "saving",
+        label: "Saving result…",
+        progress: 80,
+      });
+
+      const resultImageResponse = await fetch(result.images[0].url);
+      const resultImageBuffer = await resultImageResponse.arrayBuffer();
+
+      const resultPath = getImagePath(
+        image.workspaceId,
+        image.projectId,
+        `${imageId}.jpg`,
+        "result"
+      );
+
+      const storedResultUrl = await uploadImage(
+        new Uint8Array(resultImageBuffer),
+        resultPath,
+        "image/jpeg"
+      );
+
+      // Update database
+      await updateImageGeneration(imageId, {
+        status: "completed",
+        resultImageUrl: storedResultUrl,
+      });
+
+      metadata.set("status", {
+        step: "completed",
+        label: "Complete",
+        progress: 100,
+      });
+
+      return { success: true, resultUrl: storedResultUrl };
+    } catch (error) {
+      logger.error("Image processing failed", { imageId, error });
+
+      await updateImageGeneration(imageId, {
+        status: "failed",
+        errorMessage: error.message,
+      });
+
+      throw error;
+    }
+  },
+});
+```
+
+## Triggering Tasks
+
+### From API Routes
+
+Trigger tasks from Next.js API routes:
+
+```typescript app/api/process-image/route.ts
+import { tasks } from "@trigger.dev/sdk/v3";
+import type { processImageTask } from "@/trigger/process-image";
+
+export async function POST(request: Request) {
+  const { imageId } = await request.json();
+
+  // Trigger background task
+  const handle = await tasks.trigger<typeof processImageTask>(
+    "process-image",
+    { imageId }
+  );
+
+  return Response.json({
+    success: true,
+    runId: handle.id,
+  });
+}
+```
+
+### From Server Actions
+
+Trigger tasks from server actions:
+
+```typescript lib/actions/process-image.ts
+"use server";
+
+import { tasks } from "@trigger.dev/sdk/v3";
+import type { processImageTask } from "@/trigger/process-image";
+
+export async function processImage(imageId: string) {
+  const handle = await tasks.trigger<typeof processImageTask>(
+    "process-image",
+    { imageId }
+  );
+
+  return { runId: handle.id };
+}
+```
+
+## Progress Tracking
+
+### Setting Metadata
+
+Update task progress for UI display:
+
+```typescript
+import { metadata } from "@trigger.dev/sdk/v3";
+
+metadata.set("status", {
+  step: "processing",
+  label: "Enhancing image…",
+  progress: 50,
+});
+```
+
+### Reading Metadata
+
+Poll for task status:
+
+```typescript
+import { runs } from "@trigger.dev/sdk/v3";
+
+const run = await runs.retrieve(runId);
+const status = run.metadata?.status;
+```
+
+## Logging
+
+Use structured logging:
+
+```typescript
+import { logger } from "@trigger.dev/sdk/v3";
+
+logger.info("Processing image", { imageId, prompt });
+logger.warn("Slow processing detected", { duration: 45000 });
+logger.error("Processing failed", { error: error.message });
+```
+
+Logs appear in the Trigger.dev dashboard for debugging.
+
+## Retry Configuration
+
+### Task-Level Retries
+
+```typescript
+export const myTask = task({
+  id: "my-task",
+  retry: {
+    maxAttempts: 3,
+    minTimeoutInMs: 1000,
+    maxTimeoutInMs: 10_000,
+    factor: 2, // Exponential backoff
+    randomize: true, // Add jitter
+  },
+  run: async (payload) => {
+    // Task logic
+  },
+});
+```
+
+### Global Retries
+
+Set in `trigger.config.ts`:
+
+```typescript
+export default defineConfig({
+  retries: {
+    enabledInDev: true,
+    default: {
+      maxAttempts: 3,
+      minTimeoutInMs: 1000,
+      maxTimeoutInMs: 10_000,
+      factor: 2,
+      randomize: true,
+    },
+  },
+});
+```
+
+## Deployment
+
+### Deploy to Trigger.dev Cloud
+
+```bash
+pnpm trigger:deploy
+```
+
+This builds and deploys your tasks to Trigger.dev's infrastructure.
+
+### Environment Variables
+
+Set production environment variables in the Trigger.dev dashboard:
+
+1. Go to **Settings → Environment Variables**
+2. Add all required variables:
+   - `FAL_API_KEY`
+   - `DATABASE_URL`
+   - `SUPABASE_SECRET_KEY`
+   - `NEXT_PUBLIC_SUPABASE_URL`
+
+## Monitoring
+
+### Dashboard
+
+View task runs in the [Trigger.dev dashboard](https://cloud.trigger.dev):
+
+- Real-time run status
+- Execution logs
+- Error stack traces
+- Performance metrics
+
+### Alerts
+
+Configure alerts for:
+
+- Task failures
+- Long execution times
+- High retry rates
+
+## Resources
+
+- [Trigger.dev Documentation](https://trigger.dev/docs)
+- [v3 SDK Reference](https://trigger.dev/docs/sdk/overview)
+- [Dashboard](https://cloud.trigger.dev)
+- [Examples](https://trigger.dev/docs/examples)

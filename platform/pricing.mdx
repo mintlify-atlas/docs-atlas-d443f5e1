@@ -1,0 +1,179 @@
+---
+title: "Pricing & Plans"
+description: "Understand AI Studio's pricing structure and available subscription plans"
+---
+
+## Overview
+
+AI Studio offers three subscription tiers designed to meet different business needs, from individual photographers to large real estate agencies.
+
+## Plan Tiers
+
+Plans are defined in the workspace schema at `lib/db/schema.ts:35`:
+
+### Free Plan
+
+- **Cost**: Free forever
+- **Best for**: Testing and evaluation
+- **Status**: `plan: "free"`
+- **Features**:
+  - Access to all editing styles
+  - Limited project processing
+  - Community support
+
+### Pro Plan
+
+- **Cost**: Pay per project
+- **Best for**: Professional photographers and small agencies
+- **Status**: `plan: "pro"`
+- **Features**:
+  - Unlimited projects
+  - Priority processing
+  - Email support
+  - Saved payment methods
+
+### Enterprise Plan
+
+- **Cost**: Custom pricing
+- **Best for**: Large agencies with high volume
+- **Status**: `plan: "enterprise"`
+- **Features**:
+  - Custom pricing per workspace
+  - Invoice billing (Norwegian businesses)
+  - Dedicated support
+  - White-label branding
+  - Affiliate program access
+
+## Project Pricing
+
+<Note>
+Pricing is configured in `lib/stripe.ts` and varies by payment method.
+</Note>
+
+### Stripe Payment (International)
+
+```typescript
+PROJECT_PRICE_USD_CENTS: 9900  // $99 USD per project
+```
+
+**What's included:**
+- AI photo editing for unlimited images in a project
+- HD resolution output (up to 2048px)
+- Version history with edit tracking
+- 90 days of cloud storage
+
+### Invoice Payment (Norwegian B2B)
+
+```typescript
+PROJECT_PRICE_NOK_ORE: 100_000  // 1000 NOK per project (in øre)
+```
+
+**Requirements:**
+- Norwegian organization number
+- Invoice eligibility approved by admin
+- B2B account verification
+
+### Custom Pricing
+
+Enterprise workspaces can have custom pricing defined in the `workspace_pricing` table:
+
+```typescript
+export const workspacePricing = pgTable("workspace_pricing", {
+  imageProjectPriceOre: integer("image_project_price_ore"), // Custom rate
+  videoProjectPriceOre: integer("video_project_price_ore"), // Custom rate
+  fikenContactId: integer("fiken_contact_id"),              // Accounting integration
+});
+```
+
+## Plan Selection
+
+Plans are managed at the workspace level:
+
+<Steps>
+  <Step title="Default Assignment">
+    New workspaces start on the `free` plan automatically (`schema.ts:35`).
+  </Step>
+  
+  <Step title="Plan Upgrade">
+    Admins can upgrade workspaces to `pro` or `enterprise` through the admin panel at `/admin/workspaces/[id]`.
+  </Step>
+  
+  <Step title="Status Management">
+    Workspace status can be:
+    - `active` - Normal operation
+    - `trial` - Temporary access period
+    - `suspended` - Payment issues or violations
+  </Step>
+</Steps>
+
+## Workspace Status Types
+
+From `lib/db/schema.ts:429`:
+
+```typescript
+export type WorkspaceStatus = "active" | "suspended" | "trial";
+export type WorkspacePlan = "free" | "pro" | "enterprise";
+```
+
+### Active Status
+
+Full access to all plan features. This is the default state for paying customers.
+
+### Trial Status
+
+Temporary elevated access for evaluation:
+- Time-limited access to pro features
+- Used for demos and onboarding
+- Automatically reverts to free plan when expired
+
+### Suspended Status
+
+Restricted access due to:
+- Payment failure
+- Terms of service violation
+- Manual admin action
+
+Tracked with additional fields:
+
+```typescript
+suspendedAt: timestamp("suspended_at"),
+suspendedReason: text("suspended_reason"),
+```
+
+## Checking Plan Access
+
+### In Code
+
+Query the workspace plan from the database:
+
+```typescript
+import { db } from "@/lib/db";
+import { workspace } from "@/lib/db/schema";
+import { eq } from "drizzle-orm";
+
+const ws = await db.query.workspace.findFirst({
+  where: eq(workspace.id, workspaceId)
+});
+
+if (ws?.plan === "enterprise") {
+  // Enable white-label features
+}
+```
+
+### In Admin Panel
+
+View and modify workspace plans at:
+
+- **Workspace List**: `/admin/workspaces` - Shows plan badges
+- **Workspace Detail**: `/admin/workspaces/[id]` - Edit plan and status
+- **Revenue Dashboard**: `/admin/revenue` - Plan distribution analytics
+
+<Warning>
+Plan changes take effect immediately and may impact active projects. Always communicate with customers before downgrading.
+</Warning>
+
+## Related Topics
+
+- [Billing & Payments](/platform/billing) - Payment processing and invoicing
+- [Admin Panel](/platform/admin-panel) - Managing workspaces and plans
+- [White Label](/platform/white-label) - Enterprise branding features

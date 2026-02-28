@@ -1,0 +1,645 @@
+---
+title: Key concepts
+description: Understand the core concepts of AI Studio - workspaces, projects, style templates, and how the platform organizes your real estate marketing workflow.
+---
+
+## Overview
+
+AI Studio organizes your work around four core concepts: workspaces, projects, style templates, and team collaboration. Understanding how these pieces fit together will help you use the platform effectively.
+
+## Workspaces
+
+A **workspace** is the top-level container for all your work. Think of it as your company or agency account.
+
+### Workspace structure
+
+```typescript
+// Workspace schema from lib/db/schema.ts
+{
+  id: string,
+  name: string,               // "Acme Real Estate"
+  slug: string,               // "acme-real-estate"
+  
+  // Company details (collected during onboarding)
+  organizationNumber: string, // Norwegian org number
+  contactEmail: string,
+  contactPerson: string,
+  
+  // White-label branding
+  logo: string | null,
+  primaryColor: string | null,
+  secondaryColor: string | null,
+  
+  // Status and billing
+  status: "active" | "suspended" | "trial",
+  plan: "free" | "pro" | "enterprise",
+  onboardingCompleted: boolean
+}
+```
+
+### What workspaces contain
+
+Each workspace includes:
+
+<CardGroup cols={2}>
+  <Card title="Team members" icon="users">
+    All users belong to one workspace with specific roles (owner, admin, member)
+  </Card>
+  <Card title="Projects" icon="folder">
+    Photo editing and video projects created by any team member
+  </Card>
+  <Card title="Billing" icon="credit-card">
+    Invoice line items, pricing, and payment history
+  </Card>
+  <Card title="Settings" icon="gear">
+    Workspace name, branding, and team invitations
+  </Card>
+</CardGroup>
+
+### Workspace roles
+
+Three permission levels control what team members can do:
+
+<Tabs>
+  <Tab title="Owner">
+    Full access to everything:
+    
+    - Create and delete projects
+    - Manage team members and invitations
+    - Update workspace settings and branding
+    - Access billing and invoices
+    - Delete the workspace
+    
+    The workspace creator automatically becomes the owner. Only one owner per workspace.
+  </Tab>
+  
+  <Tab title="Admin">
+    Management capabilities:
+    
+    - Create and delete projects
+    - Invite new team members
+    - Update workspace settings
+    - View billing information
+    
+    Cannot delete the workspace or remove the owner.
+  </Tab>
+  
+  <Tab title="Member">
+    Standard user access:
+    
+    - Create projects
+    - View and download project results
+    - Edit their own projects
+    
+    Cannot manage team members or access billing.
+  </Tab>
+</Tabs>
+
+<Note>
+  System admins (platform administrators) have `isSystemAdmin: true` and can access all workspaces for support and moderation purposes.
+</Note>
+
+### White-label branding
+
+Customize your workspace appearance:
+
+```typescript
+// Branding options:
+{
+  logo: "https://storage.example.com/workspace-123/logo.png",
+  primaryColor: "#FF6B6B",   // Header, buttons, accents
+  secondaryColor: "#4ECDC4"  // Secondary UI elements
+}
+```
+
+When you set custom branding:
+- Your logo appears in the dashboard header
+- Primary color replaces default blue in buttons and links
+- Secondary color styles badges and secondary actions
+- Team members see your branded interface
+
+## Projects
+
+A **project** groups related images or videos together. Projects are the core unit of work in AI Studio.
+
+### Project types
+
+<Tabs>
+  <Tab title="Photo projects">
+    Photo editing projects transform property images with AI:
+    
+    ```typescript
+    // Photo project schema:
+    {
+      id: string,
+      workspaceId: string,
+      userId: string,
+      name: string,                    // "123 Main Street - Living Room"
+      styleTemplateId: string,         // "scandinavian"
+      roomType: string | null,         // "living-room"
+      thumbnailUrl: string | null,     // First image preview
+      status: "pending" | "processing" | "completed" | "failed",
+      imageCount: number,              // Total images uploaded
+      completedCount: number,          // Successfully processed
+      createdAt: Date,
+      updatedAt: Date
+    }
+    ```
+    
+    Each photo project contains multiple `imageGeneration` records (one per uploaded image).
+  </Tab>
+  
+  <Tab title="Video projects">
+    Video projects create property tour videos from your enhanced images:
+    
+    ```typescript
+    // Video project schema:
+    {
+      id: string,
+      workspaceId: string,
+      userId: string,
+      name: string,
+      description: string | null,
+      
+      // Settings
+      aspectRatio: "16:9" | "9:16" | "1:1",
+      musicTrackId: string | null,
+      musicVolume: number,             // 0-100
+      generateNativeAudio: boolean,
+      
+      // Output
+      finalVideoUrl: string | null,
+      thumbnailUrl: string | null,
+      durationSeconds: number | null,
+      
+      // Status
+      status: "draft" | "generating" | "compiling" | "completed" | "failed",
+      clipCount: number,
+      completedClipCount: number,
+      estimatedCost: number,           // In cents
+      actualCost: number | null
+    }
+    ```
+    
+    Each video project contains multiple `videoClip` records (5-second clips from images).
+  </Tab>
+</Tabs>
+
+### Project lifecycle
+
+<Steps>
+  <Step title="Creation">
+    User creates a project via the dashboard:
+    
+    ```typescript
+    // Server action: lib/actions/projects.ts
+    createProjectAction(formData) {
+      // 1. Validate user session
+      // 2. Get workspace ID
+      // 3. Create project record with status: "pending"
+      // 4. Return project data
+    }
+    ```
+  </Step>
+  
+  <Step title="Upload and queue">
+    Images are uploaded to Supabase storage, and AI jobs are queued:
+    
+    ```typescript
+    // Storage path pattern:
+    "workspaces/{workspaceId}/projects/{projectId}/images/"
+    
+    // Trigger.dev queues background jobs:
+    {
+      jobType: "image-generation",
+      projectId: string,
+      imageUrls: string[],
+      styleTemplateId: string,
+      roomType: string | null
+    }
+    ```
+  </Step>
+  
+  <Step title="AI processing">
+    Trigger.dev workers process images via Fal.ai:
+    
+    ```typescript
+    // For each image:
+    1. Generate prompt from template + room type
+    2. Send to Fal.ai with original image URL
+    3. Poll for completion (30-60 seconds)
+    4. Save result URL to database
+    5. Update project.completedCount
+    6. Update project.status when all complete
+    ```
+    
+    Status transitions:
+    - `pending` → `processing` (first image starts)
+    - `processing` → `completed` (all images done)
+    - `processing` → `failed` (any image fails)
+  </Step>
+  
+  <Step title="Completion">
+    When all images are processed:
+    
+    - Project status becomes `completed`
+    - Thumbnail URL is set to first enhanced image
+    - User receives notification (if enabled)
+    - Project appears in dashboard with results
+  </Step>
+</Steps>
+
+### Project metadata
+
+Projects track useful metadata:
+
+```typescript
+// Image generation metadata example:
+{
+  metadata: {
+    falRunId: "fal-run-12345",
+    processingTime: 45.2,        // seconds
+    modelVersion: "flux-pro/v1.1",
+    originalSize: { width: 2048, height: 1536 },
+    enhancedSize: { width: 2048, height: 1536 },
+    costUSD: 0.055               // AI API cost
+  }
+}
+```
+
+This helps with:
+- Debugging failed generations
+- Cost tracking and optimization
+- Performance monitoring
+- Audit trails
+
+## Style templates
+
+Style templates define how the AI transforms your images. Each template includes a carefully crafted prompt that guides the AI.
+
+### Template structure
+
+```typescript
+// Style template definition (lib/style-templates.ts):
+{
+  id: "scandinavian",
+  name: "Scandinavian",
+  description: "Light, airy spaces with natural wood and minimal decor",
+  category: "staging",
+  thumbnail: "https://images.unsplash.com/.../",
+  prompt: `Transform into a Scandinavian-style interior. Add light wooden 
+           furniture, white and neutral tones, natural textures like linen 
+           and wool, minimalist decor with clean lines. Include plants for 
+           freshness. The space should feel bright, calm, and inviting with 
+           excellent natural lighting.`,
+  comingSoon: false
+}
+```
+
+### How prompts work
+
+When you create a project, the platform generates a complete prompt:
+
+```typescript
+// Prompt generation (lib/style-templates.ts):
+function generatePrompt(template: StyleTemplate, roomType: string | null) {
+  const preserveStructure = 
+    "Do not move, remove, or modify windows, walls, doors, or any " +
+    "architectural elements. Keep the room layout exactly as shown.";
+  
+  let prompt = template.prompt;
+  
+  if (roomType) {
+    const roomLabel = roomType.replace(/-/g, " ");
+    prompt = `This is a ${roomLabel}. ${prompt}`;
+  }
+  
+  return `${prompt} ${preserveStructure}`;
+}
+
+// Example output:
+"This is a living room. Transform into a Scandinavian-style interior. 
+Add light wooden furniture, white and neutral tones... Do not move, 
+remove, or modify windows, walls, doors..."
+```
+
+### Template categories
+
+Templates are organized into categories:
+
+<Tabs>
+  <Tab title="Staging">
+    Interior design and furniture styles:
+    
+    - **Scandinavian**: Light wood, minimal decor, natural tones
+    - **Modern Minimalist**: Clean lines, neutral palette (coming soon)
+    - **Luxury Estate**: High-end, sophisticated (coming soon)
+    - **Cozy Family Home**: Warm, inviting atmosphere (coming soon)
+  </Tab>
+  
+  <Tab title="Lighting">
+    Lighting enhancements:
+    
+    - **Natural Light**: Enhanced window lighting (coming soon)
+    - **Golden Hour**: Warm sunset tones (coming soon)
+    - **Studio Lighting**: Professional flash photography (coming soon)
+  </Tab>
+  
+  <Tab title="Exterior">
+    Outdoor and facade improvements:
+    
+    - **Curb Appeal**: Enhanced landscaping (coming soon)
+    - **Seasonal**: Spring, summer, fall, winter looks (coming soon)
+  </Tab>
+  
+  <Tab title="Atmosphere">
+    Mood and ambiance:
+    
+    - **Cozy Evening**: Warm lamps, sunset glow (coming soon)
+    - **Fresh Morning**: Bright, energetic feel (coming soon)
+  </Tab>
+</Tabs>
+
+<Info>
+  Currently, only the Scandinavian template is available. More templates are being added based on user feedback and quality testing.
+</Info>
+
+### Custom prompts (future)
+
+In a future release, you'll be able to create custom style templates:
+
+```typescript
+// Planned feature:
+{
+  id: "custom-coastal",
+  name: "Coastal Retreat",
+  description: "Beach house vibes with blues and whites",
+  category: "staging",
+  prompt: "Your custom prompt here...",
+  workspaceId: "workspace-123",  // Only visible to your workspace
+  isPublic: false
+}
+```
+
+## Image generation
+
+Each uploaded image creates an `imageGeneration` record that tracks AI processing.
+
+### Image generation schema
+
+```typescript
+{
+  id: string,
+  workspaceId: string,
+  userId: string,
+  projectId: string,
+  
+  // Image URLs
+  originalImageUrl: string,      // Uploaded to Supabase
+  resultImageUrl: string | null, // AI-enhanced result
+  prompt: string,                // Full generated prompt
+  
+  // Version tracking
+  version: number,               // 1, 2, 3...
+  parentId: string | null,       // Links to previous version
+  
+  // Status
+  status: "pending" | "processing" | "completed" | "failed",
+  errorMessage: string | null,
+  
+  // Metadata
+  metadata: jsonb,               // Fal.ai response, timings, costs
+  
+  createdAt: Date,
+  updatedAt: Date
+}
+```
+
+### Version tracking
+
+If you re-edit an image with a different style, a new version is created:
+
+```typescript
+// Original enhancement:
+{
+  id: "img-v1",
+  version: 1,
+  parentId: null,
+  styleTemplateId: "scandinavian",
+  resultImageUrl: "https://.../scandinavian-result.jpg"
+}
+
+// Re-edited with different style:
+{
+  id: "img-v2",
+  version: 2,
+  parentId: "img-v1",
+  styleTemplateId: "modern-minimalist",
+  resultImageUrl: "https://.../modern-result.jpg"
+}
+```
+
+This creates an edit history, allowing you to compare different styles applied to the same original image.
+
+## Video clips
+
+Video projects generate individual 5-second clips from your images, then compile them into a final video.
+
+### Video clip schema
+
+```typescript
+{
+  id: string,
+  videoProjectId: string,
+  
+  // Source images
+  sourceImageUrl: string,              // Start frame
+  imageGenerationId: string | null,
+  endImageUrl: string | null,          // End frame (optional)
+  endImageGenerationId: string | null,
+  
+  // Room context
+  roomType: string,                    // "living-room", "kitchen", etc.
+  roomLabel: string | null,            // "Master Bedroom", "Front Yard"
+  sequenceOrder: number,               // 1, 2, 3... (playback order)
+  
+  // AI generation
+  motionPrompt: string | null,         // "Slow pan left to right"
+  clipUrl: string | null,              // Kling AI output
+  durationSeconds: number,             // Default: 5
+  
+  // Transitions
+  transitionType: "cut" | "seamless",
+  transitionClipUrl: string | null,    // Generated transition
+  
+  status: "pending" | "processing" | "completed" | "failed",
+  metadata: jsonb
+}
+```
+
+### Clip sequencing
+
+Clips play in order based on `sequenceOrder`:
+
+```typescript
+// Example video with 4 clips:
+[
+  { sequenceOrder: 1, roomType: "exterior",    roomLabel: "Front Facade" },
+  { sequenceOrder: 2, roomType: "living-room", roomLabel: "Living Room" },
+  { sequenceOrder: 3, roomType: "kitchen",     roomLabel: "Kitchen" },
+  { sequenceOrder: 4, roomType: "bedroom",     roomLabel: "Master Suite" }
+]
+
+// User can drag-drop to reorder in the video editor
+```
+
+### Motion prompts
+
+Kling AI generates camera motion based on prompts:
+
+```typescript
+// Motion prompt examples:
+"Slow pan from left to right, showcasing the entire space"
+"Gentle zoom in towards the center, emphasizing the focal point"
+"Steady dolly forward, moving deeper into the room"
+"Static shot with subtle ambient movement"
+```
+
+The platform auto-generates appropriate motion prompts based on room type, or you can customize them.
+
+## Room types
+
+Room types provide context for both photo enhancement and video sequencing.
+
+### Available room types
+
+```typescript
+// From lib/db/schema.ts:
+type RoomType =
+  // Interior
+  | "living-room" | "kitchen" | "bedroom" | "bathroom" | "toilet"
+  | "hallway" | "office" | "laundry-room" | "storage-room"
+  | "walk-in-closet" | "sauna" | "gym" | "childrens-room"
+  | "pool-area" | "dining-room" | "tv-room" | "library"
+  | "hobby-room" | "utility-room" | "pantry" | "conservatory"
+  // Exterior
+  | "garage" | "terrace" | "garden" | "landscape" | "exterior"
+  | "other";
+```
+
+### Room type UI mapping
+
+```typescript
+// User-facing labels (lib/style-templates.ts):
+const ROOM_TYPES = [
+  {
+    id: "living-room",
+    label: "Living Room",
+    icon: "IconSofa",
+    description: "Living spaces, family rooms, lounges"
+  },
+  {
+    id: "bedroom",
+    label: "Bedroom",
+    icon: "IconBed",
+    description: "Bedrooms, master suites, guest rooms"
+  },
+  // ... etc
+];
+```
+
+Icons use Tabler Icons for consistent visual representation across the UI.
+
+## Payment and billing
+
+AI Studio supports multiple payment methods based on customer type.
+
+### Payment methods
+
+<Tabs>
+  <Tab title="Stripe (Card payments)">
+    For international customers and immediate payment:
+    
+    ```typescript
+    {
+      paymentMethod: "stripe",
+      stripeCheckoutSessionId: "cs_test_...",
+      stripePaymentIntentId: "pi_...",
+      amountCents: 9900,           // $99.00 USD
+      currency: "usd",
+      status: "completed"
+    }
+    ```
+    
+    Payment happens before AI processing begins.
+  </Tab>
+  
+  <Tab title="Invoice (B2B)">
+    For Norwegian businesses with valid organization numbers:
+    
+    ```typescript
+    {
+      paymentMethod: "invoice",
+      invoiceLineItemId: "line-item-123",
+      amountCents: 100000,         // 1000 NOK
+      currency: "nok",
+      status: "pending"            // Invoice sent, awaiting payment
+    }
+    ```
+    
+    Projects are processed immediately, payment collected later via invoice.
+  </Tab>
+  
+  <Tab title="Free (Trial/Admin)">
+    For trial workspaces or admin-granted free access:
+    
+    ```typescript
+    {
+      paymentMethod: "free",
+      amountCents: 0,
+      currency: "usd",
+      status: "completed"
+    }
+    ```
+  </Tab>
+</Tabs>
+
+### Invoice line items
+
+Each project creates a billable line item:
+
+```typescript
+{
+  id: string,
+  workspaceId: string,
+  projectId: string | null,
+  videoProjectId: string | null,
+  description: "AI Photo Enhancement - 5 images",
+  amountOre: 100000,              // 1000 NOK (stored in ore, smallest unit)
+  quantity: 1,
+  status: "pending" | "invoiced" | "cancelled",
+  invoiceId: string | null        // Linked when invoice is generated
+}
+```
+
+Line items remain `pending` until an admin generates an invoice, at which point they're marked `invoiced`.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Photo editing guide" icon="image" href="/features/photo-editing">
+    Deep dive into image enhancement workflows and best practices.
+  </Card>
+  
+  <Card title="Video creation guide" icon="video" href="/features/video-creation">
+    Learn how to create property tour videos from your enhanced images.
+  </Card>
+  
+  <Card title="Team collaboration" icon="users" href="/features/team-collaboration">
+    Set up your workspace, invite team members, and manage permissions.
+  </Card>
+  
+  <Card title="API reference" icon="code" href="/api-reference/auth/overview">
+    Integrate AI Studio into your existing tools and workflows.
+  </Card>
+</CardGroup>

@@ -1,0 +1,796 @@
+---
+title: 'Authentication'
+description: 'Complete authentication API reference for AI Studio'
+---
+
+## Overview
+
+AI Studio uses [Better Auth](https://better-auth.com) for authentication, providing a secure, modern authentication system with email/password support, session management, and admin capabilities.
+
+All authentication endpoints are available at `/api/auth/*` and handle user registration, login, email verification, password reset, and session management.
+
+## Base URL
+
+```
+https://yourdomain.com/api/auth
+```
+
+## Authentication Methods
+
+AI Studio supports the following authentication methods:
+
+- **Email & Password**: Traditional email/password authentication with verification
+- **Session-based**: Secure HTTP-only cookie sessions (7-day expiry)
+
+## Key Features
+
+<CardGroup cols={2}>
+  <Card title="Email Verification" icon="envelope-circle-check">
+    Required email verification for new accounts with automatic workspace creation
+  </Card>
+  <Card title="Session Management" icon="clock">
+    7-day sessions with 1-day refresh window and automatic cleanup
+  </Card>
+  <Card title="Password Reset" icon="key">
+    Secure password reset with 1-hour token expiration
+  </Card>
+  <Card title="Admin Plugin" icon="user-shield">
+    Built-in admin impersonation and user management capabilities
+  </Card>
+</CardGroup>
+
+## Configuration
+
+The authentication system is configured in `lib/auth.ts` with the following settings:
+
+```typescript
+{
+  emailAndPassword: {
+    enabled: true,
+    minPasswordLength: 8,
+    requireEmailVerification: true,
+    resetPasswordTokenExpiresIn: 3600 // 1 hour
+  },
+  session: {
+    expiresIn: 604800,    // 7 days
+    updateAge: 86400      // 1 day refresh window
+  }
+}
+```
+
+## Database Schema
+
+Authentication data is stored across multiple tables:
+
+### User Table
+
+```typescript
+user {
+  id: string              // Primary key
+  name: string            // User's display name
+  email: string           // Unique email address
+  emailVerified: boolean  // Verification status
+  image: string?          // Profile image URL
+  workspaceId: string     // Associated workspace
+  role: string            // owner | admin | member
+  isSystemAdmin: boolean  // Super admin flag
+  banned: boolean         // Ban status
+  banReason: string?      // Reason for ban
+  banExpires: timestamp?  // Ban expiration
+  createdAt: timestamp
+  updatedAt: timestamp
+}
+```
+
+### Session Table
+
+See [Session Management](/api-reference/auth/sessions) for details.
+
+### Account Table
+
+```typescript
+account {
+  id: string
+  accountId: string       // Provider-specific ID
+  providerId: string      // Auth provider (email, google, etc.)
+  userId: string          // Foreign key to user
+  password: string        // Hashed password (for email provider)
+  createdAt: timestamp
+  updatedAt: timestamp
+}
+```
+
+### Verification Table
+
+```typescript
+verification {
+  id: string
+  identifier: string      // Email or phone
+  value: string           // Verification token
+  expiresAt: timestamp    // Token expiration
+  createdAt: timestamp
+  updatedAt: timestamp
+}
+```
+
+## Automatic Workspace Creation
+
+When a user signs up, a workspace is automatically created:
+
+```typescript
+// From lib/auth.ts database hooks
+databaseHooks: {
+  user: {
+    create: {
+      after: async (createdUser) => {
+        // Generate workspace slug from email
+        const slug = createdUser.email
+          .split("@")[0]
+          .toLowerCase()
+          .replace(/[^a-z0-9]/g, "-");
+        
+        const workspaceId = nanoid();
+        
+        // Create workspace
+        await db.insert(workspace).values({
+          id: workspaceId,
+          name: `${createdUser.name}'s Workspace`,
+          slug: `${slug}-${workspaceId.slice(0, 6)}`,
+        });
+        
+        // Link user to workspace as owner
+        await db.update(user)
+          .set({ workspaceId, role: "owner" })
+          .where(eq(user.id, createdUser.id));
+      }
+    }
+  }
+}
+```
+
+## Client-Side Usage
+
+The authentication client is available via `lib/auth-client.ts`:
+
+```typescript
+import { authClient, signIn, signUp, signOut, useSession } from "@/lib/auth-client";
+
+// In React components
+const { data: session, isPending } = useSession();
+
+// Sign up
+await signUp.email({
+  email: "user@example.com",
+  password: "secure-password",
+  name: "John Doe"
+});
+
+// Sign in
+await signIn.email({
+  email: "user@example.com",
+  password: "secure-password"
+});
+
+// Sign out
+await signOut();
+```
+
+## Core Endpoints
+
+<CardGroup cols={2}>
+  <Card title="Sign Up" icon="user-plus" href="#sign-up">
+    Create a new user account with email and password
+  </Card>
+  <Card title="Sign In" icon="right-to-bracket" href="#sign-in">
+    Authenticate with email and password
+  </Card>
+  <Card title="Sign Out" icon="right-from-bracket" href="#sign-out">
+    End the current session
+  </Card>
+  <Card title="Verify Email" icon="envelope-circle-check" href="#verify-email">
+    Verify user email address with token
+  </Card>
+  <Card title="Reset Password" icon="key" href="#reset-password">
+    Request and complete password reset
+  </Card>
+  <Card title="Get Session" icon="user" href="#get-session">
+    Retrieve current user session
+  </Card>
+</CardGroup>
+
+---
+
+## Sign Up
+
+<api-endpoint method="POST" endpoint="/api/auth/sign-up/email" />
+
+Create a new user account with email and password. Sends a verification email and creates a workspace automatically.
+
+### Request Body
+
+<ParamField body="email" type="string" required>
+  User's email address (must be unique)
+</ParamField>
+
+<ParamField body="password" type="string" required>
+  User's password (minimum 8 characters)
+</ParamField>
+
+<ParamField body="name" type="string" required>
+  User's display name
+</ParamField>
+
+### Response
+
+<ResponseField name="user" type="object">
+  The created user object
+  
+  <Expandable title="properties">
+    <ResponseField name="id" type="string">
+      Unique user identifier
+    </ResponseField>
+    
+    <ResponseField name="email" type="string">
+      User's email address
+    </ResponseField>
+    
+    <ResponseField name="name" type="string">
+      User's display name
+    </ResponseField>
+    
+    <ResponseField name="emailVerified" type="boolean">
+      Email verification status (false initially)
+    </ResponseField>
+    
+    <ResponseField name="workspaceId" type="string">
+      Associated workspace ID (created automatically)
+    </ResponseField>
+    
+    <ResponseField name="role" type="string">
+      User role in workspace ("owner" for new signups)
+    </ResponseField>
+    
+    <ResponseField name="createdAt" type="timestamp">
+      Account creation timestamp
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="session" type="object">
+  The created session (only if auto-sign-in is enabled)
+  
+  <Expandable title="properties">
+    <ResponseField name="token" type="string">
+      Session token (set as HTTP-only cookie)
+    </ResponseField>
+    
+    <ResponseField name="expiresAt" type="timestamp">
+      Session expiration time (7 days from creation)
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Example Request
+
+```bash
+curl -X POST https://yourdomain.com/api/auth/sign-up/email \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "john@example.com",
+    "password": "SecurePass123!",
+    "name": "John Doe"
+  }'
+```
+
+### Example Response
+
+```json
+{
+  "user": {
+    "id": "usr_a1b2c3d4e5",
+    "email": "john@example.com",
+    "name": "John Doe",
+    "emailVerified": false,
+    "workspaceId": "wks_x9y8z7w6v5",
+    "role": "owner",
+    "isSystemAdmin": false,
+    "banned": false,
+    "createdAt": "2024-01-15T10:30:00Z",
+    "updatedAt": "2024-01-15T10:30:00Z"
+  }
+}
+```
+
+<Note>
+  A verification email is automatically sent to the user's email address. The user must verify their email before signing in.
+</Note>
+
+---
+
+## Sign In
+
+<api-endpoint method="POST" endpoint="/api/auth/sign-in/email" />
+
+Authenticate a user with email and password. Creates a new session on successful authentication.
+
+### Request Body
+
+<ParamField body="email" type="string" required>
+  User's email address
+</ParamField>
+
+<ParamField body="password" type="string" required>
+  User's password
+</ParamField>
+
+<ParamField body="rememberMe" type="boolean">
+  Whether to extend session duration (default: false)
+</ParamField>
+
+### Response
+
+<ResponseField name="user" type="object">
+  The authenticated user object
+  
+  <Expandable title="properties">
+    <ResponseField name="id" type="string">
+      Unique user identifier
+    </ResponseField>
+    
+    <ResponseField name="email" type="string">
+      User's email address
+    </ResponseField>
+    
+    <ResponseField name="name" type="string">
+      User's display name
+    </ResponseField>
+    
+    <ResponseField name="emailVerified" type="boolean">
+      Email verification status
+    </ResponseField>
+    
+    <ResponseField name="workspaceId" type="string">
+      Associated workspace ID
+    </ResponseField>
+    
+    <ResponseField name="role" type="string">
+      User role in workspace
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="session" type="object">
+  The created session
+  
+  <Expandable title="properties">
+    <ResponseField name="id" type="string">
+      Session identifier
+    </ResponseField>
+    
+    <ResponseField name="token" type="string">
+      Session token (set as HTTP-only cookie)
+    </ResponseField>
+    
+    <ResponseField name="expiresAt" type="timestamp">
+      Session expiration time
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Example Request
+
+```bash
+curl -X POST https://yourdomain.com/api/auth/sign-in/email \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "john@example.com",
+    "password": "SecurePass123!"
+  }'
+```
+
+### Example Response
+
+```json
+{
+  "user": {
+    "id": "usr_a1b2c3d4e5",
+    "email": "john@example.com",
+    "name": "John Doe",
+    "emailVerified": true,
+    "workspaceId": "wks_x9y8z7w6v5",
+    "role": "owner",
+    "isSystemAdmin": false
+  },
+  "session": {
+    "id": "ses_p9o8i7u6y5",
+    "token": "session_token_here",
+    "expiresAt": "2024-01-22T10:30:00Z"
+  }
+}
+```
+
+<Warning>
+  If email is not verified, the request will fail with a 403 error. A new verification email is automatically sent.
+</Warning>
+
+---
+
+## Sign Out
+
+<api-endpoint method="POST" endpoint="/api/auth/sign-out" />
+
+End the current user session and clear the session cookie.
+
+### Headers
+
+<ParamField header="Cookie" type="string" required>
+  Session cookie (automatically sent by browser)
+</ParamField>
+
+### Response
+
+<ResponseField name="success" type="boolean">
+  Whether the sign-out was successful
+</ResponseField>
+
+### Example Request
+
+```bash
+curl -X POST https://yourdomain.com/api/auth/sign-out \
+  -H "Cookie: better-auth.session_token=session_token_here"
+```
+
+### Example Response
+
+```json
+{
+  "success": true
+}
+```
+
+---
+
+## Verify Email
+
+<api-endpoint method="GET" endpoint="/api/auth/verify-email" />
+
+Verify a user's email address using the token sent via email.
+
+### Query Parameters
+
+<ParamField query="token" type="string" required>
+  Email verification token from the verification email
+</ParamField>
+
+### Response
+
+<ResponseField name="user" type="object">
+  The user object with updated email verification status
+  
+  <Expandable title="properties">
+    <ResponseField name="id" type="string">
+      User identifier
+    </ResponseField>
+    
+    <ResponseField name="emailVerified" type="boolean">
+      Updated to true after successful verification
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="session" type="object">
+  Automatically created session after verification
+  
+  <Expandable title="properties">
+    <ResponseField name="token" type="string">
+      Session token (set as HTTP-only cookie)
+    </ResponseField>
+    
+    <ResponseField name="expiresAt" type="timestamp">
+      Session expiration time
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Example Request
+
+```bash
+curl https://yourdomain.com/api/auth/verify-email?token=verify_abc123xyz789
+```
+
+### Example Response
+
+```json
+{
+  "user": {
+    "id": "usr_a1b2c3d4e5",
+    "email": "john@example.com",
+    "emailVerified": true
+  },
+  "session": {
+    "token": "session_token_here",
+    "expiresAt": "2024-01-22T10:30:00Z"
+  }
+}
+```
+
+<Note>
+  After successful verification, the user is automatically signed in with a new session.
+</Note>
+
+---
+
+## Reset Password
+
+Password reset is a two-step process:
+
+### Step 1: Request Reset
+
+<api-endpoint method="POST" endpoint="/api/auth/forget-password" />
+
+Request a password reset email with a reset token.
+
+#### Request Body
+
+<ParamField body="email" type="string" required>
+  Email address of the account to reset
+</ParamField>
+
+<ParamField body="redirectTo" type="string">
+  URL to redirect to after reset (default: /reset-password)
+</ParamField>
+
+#### Example Request
+
+```bash
+curl -X POST https://yourdomain.com/api/auth/forget-password \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "john@example.com"
+  }'
+```
+
+#### Example Response
+
+```json
+{
+  "success": true,
+  "message": "Password reset email sent"
+}
+```
+
+### Step 2: Complete Reset
+
+<api-endpoint method="POST" endpoint="/api/auth/reset-password" />
+
+Reset the password using the token from the email.
+
+#### Request Body
+
+<ParamField body="token" type="string" required>
+  Password reset token from email (valid for 1 hour)
+</ParamField>
+
+<ParamField body="password" type="string" required>
+  New password (minimum 8 characters)
+</ParamField>
+
+#### Example Request
+
+```bash
+curl -X POST https://yourdomain.com/api/auth/reset-password \
+  -H "Content-Type: application/json" \
+  -d '{
+    "token": "reset_abc123xyz789",
+    "password": "NewSecurePass123!"
+  }'
+```
+
+#### Example Response
+
+```json
+{
+  "success": true,
+  "message": "Password reset successful"
+}
+```
+
+<Warning>
+  Reset tokens expire after 1 hour. If the token is expired, the user must request a new password reset email.
+</Warning>
+
+---
+
+## Get Session
+
+<api-endpoint method="GET" endpoint="/api/auth/get-session" />
+
+Retrieve the current user session and user information.
+
+### Headers
+
+<ParamField header="Cookie" type="string" required>
+  Session cookie (automatically sent by browser)
+</ParamField>
+
+### Response
+
+<ResponseField name="session" type="object">
+  Current session information
+  
+  <Expandable title="properties">
+    <ResponseField name="id" type="string">
+      Session identifier
+    </ResponseField>
+    
+    <ResponseField name="userId" type="string">
+      Associated user ID
+    </ResponseField>
+    
+    <ResponseField name="expiresAt" type="timestamp">
+      Session expiration time
+    </ResponseField>
+    
+    <ResponseField name="ipAddress" type="string">
+      IP address from session creation
+    </ResponseField>
+    
+    <ResponseField name="userAgent" type="string">
+      User agent from session creation
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="user" type="object">
+  Current user information
+  
+  <Expandable title="properties">
+    <ResponseField name="id" type="string">
+      User identifier
+    </ResponseField>
+    
+    <ResponseField name="email" type="string">
+      User's email address
+    </ResponseField>
+    
+    <ResponseField name="name" type="string">
+      User's display name
+    </ResponseField>
+    
+    <ResponseField name="emailVerified" type="boolean">
+      Email verification status
+    </ResponseField>
+    
+    <ResponseField name="workspaceId" type="string">
+      Associated workspace ID
+    </ResponseField>
+    
+    <ResponseField name="role" type="string">
+      User role in workspace
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Example Request
+
+```bash
+curl https://yourdomain.com/api/auth/get-session \
+  -H "Cookie: better-auth.session_token=session_token_here"
+```
+
+### Example Response
+
+```json
+{
+  "session": {
+    "id": "ses_p9o8i7u6y5",
+    "userId": "usr_a1b2c3d4e5",
+    "expiresAt": "2024-01-22T10:30:00Z",
+    "ipAddress": "192.168.1.1",
+    "userAgent": "Mozilla/5.0...",
+    "createdAt": "2024-01-15T10:30:00Z",
+    "updatedAt": "2024-01-15T10:30:00Z"
+  },
+  "user": {
+    "id": "usr_a1b2c3d4e5",
+    "email": "john@example.com",
+    "name": "John Doe",
+    "emailVerified": true,
+    "workspaceId": "wks_x9y8z7w6v5",
+    "role": "owner",
+    "isSystemAdmin": false
+  }
+}
+```
+
+<Note>
+  If the session is older than 1 day (updateAge), it will be automatically refreshed with a new expiration time.
+</Note>
+
+---
+
+## Error Responses
+
+All authentication endpoints return standard error responses:
+
+### 400 Bad Request
+
+```json
+{
+  "error": "Validation failed",
+  "message": "Password must be at least 8 characters"
+}
+```
+
+### 401 Unauthorized
+
+```json
+{
+  "error": "Invalid credentials",
+  "message": "Email or password is incorrect"
+}
+```
+
+### 403 Forbidden
+
+```json
+{
+  "error": "Email not verified",
+  "message": "Please verify your email before signing in"
+}
+```
+
+### 429 Too Many Requests
+
+```json
+{
+  "error": "Rate limit exceeded",
+  "message": "Too many attempts. Please try again later."
+}
+```
+
+## Security Considerations
+
+<AccordionGroup>
+  <Accordion title="Password Requirements">
+    - Minimum 8 characters
+    - Stored using bcrypt hashing
+    - Never returned in API responses
+  </Accordion>
+  
+  <Accordion title="Session Security">
+    - HTTP-only cookies prevent XSS attacks
+    - 7-day expiration with 1-day refresh window
+    - IP address and user agent tracking
+    - Automatic cleanup of expired sessions
+  </Accordion>
+  
+  <Accordion title="Email Verification">
+    - Required before first sign-in
+    - Tokens are single-use and time-limited
+    - Verification emails sent on signup and unverified sign-in attempts
+  </Accordion>
+  
+  <Accordion title="Password Reset">
+    - Tokens expire after 1 hour
+    - Single-use tokens
+    - Secure token extraction from reset URLs
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Session Management" icon="clock" href="/api-reference/auth/sessions">
+    Learn about session lifecycle and management
+  </Card>
+  <Card title="User Management" icon="users" href="/api-reference/users">
+    Manage users and workspace roles
+  </Card>
+  <Card title="Workspace API" icon="building" href="/api-reference/workspaces">
+    Work with workspaces and teams
+  </Card>
+  <Card title="Admin Plugin" icon="user-shield" href="/api-reference/admin">
+    Admin impersonation and user management
+  </Card>
+</CardGroup>

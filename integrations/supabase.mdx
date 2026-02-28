@@ -1,0 +1,337 @@
+---
+title: Supabase Integration
+description: Database and file storage using Supabase PostgreSQL and Storage
+---
+
+## Overview
+
+Supabase provides two critical services for AI Studio:
+
+1. **PostgreSQL Database** - Stores all application data (users, workspaces, projects, etc.)
+2. **Storage** - Hosts original images, processed results, and generated videos
+
+## Configuration
+
+### Environment Variables
+
+Add the following to your `.env.local` file:
+
+```bash
+# Database Connection
+# Get from: Supabase Dashboard → Settings → Database → Connection string
+# Use the "Transaction" pooler connection string for serverless environments
+# Format: postgresql://postgres.[project-ref]:[password]@[host]:6543/postgres
+DATABASE_URL=postgresql://postgres.xxxx:password@aws-0-region.pooler.supabase.com:6543/postgres
+
+# Supabase Storage & Auth
+# Get from: Supabase Dashboard → Settings → API
+NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
+
+# Secret Key: Used for server-side operations (keep private!)
+# Found under "Project API keys" → "service_role" (secret)
+SUPABASE_SECRET_KEY=sb_secret_your_supabase_secret_key_here
+```
+
+### Setup Steps
+
+<Steps>
+  <Step title="Create Supabase Project">
+    1. Sign up at [supabase.com](https://supabase.com)
+    2. Create a new project
+    3. Wait for the database to provision (usually 2-3 minutes)
+  </Step>
+
+  <Step title="Get Database URL">
+    1. Go to **Settings → Database**
+    2. Under "Connection string", select **Transaction** mode
+    3. Copy the connection string (use the pooler for serverless)
+    4. Replace `[YOUR-PASSWORD]` with your database password
+    5. Set as `DATABASE_URL` in your `.env.local`
+  </Step>
+
+  <Step title="Get API Keys">
+    1. Go to **Settings → API**
+    2. Copy the **Project URL** → `NEXT_PUBLIC_SUPABASE_URL`
+    3. Copy the **service_role** secret key → `SUPABASE_SECRET_KEY`
+    
+    <Warning>
+      Never expose `SUPABASE_SECRET_KEY` in client-side code. It bypasses Row Level Security.
+    </Warning>
+  </Step>
+
+  <Step title="Create Storage Bucket">
+    1. Go to **Storage** in your Supabase dashboard
+    2. Create a new bucket named `aistudio-bucket`
+    3. Set it to **Public** (for serving images/videos)
+    4. Configure CORS if needed for client uploads
+  </Step>
+
+  <Step title="Push Database Schema">
+    Run the following command to sync your schema:
+
+    ```bash
+    pnpm db:push
+    ```
+
+    This uses Drizzle ORM to create all required tables.
+  </Step>
+</Steps>
+
+## Database Client
+
+The database is accessed via Drizzle ORM. Supabase is only used for storage operations.
+
+### Server-Side Client
+
+For storage operations, use the admin client in `lib/supabase.ts`:
+
+```typescript lib/supabase.ts
+import { createClient } from "@supabase/supabase-js";
+import type { Database } from "@/lib/types/database";
+
+// Server-side client with secret key (for uploads)
+export const supabaseAdmin = createClient<Database>(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.SUPABASE_SECRET_KEY!
+);
+
+// Storage bucket name
+export const STORAGE_BUCKET = "aistudio-bucket";
+```
+
+## Storage Functions
+
+### Upload Image
+
+Upload images to organized paths:
+
+```typescript
+import { uploadImage, getImagePath } from "@/lib/supabase";
+
+// Define storage path
+const path = getImagePath(
+  workspaceId,
+  projectId,
+  `${imageId}.jpg`,
+  "original" // or "result"
+);
+// Returns: workspaceId/projectId/original/imageId.jpg
+
+// Upload file
+const publicUrl = await uploadImage(
+  fileBuffer,
+  path,
+  "image/jpeg"
+);
+```
+
+### Upload Video
+
+Upload generated videos:
+
+```typescript
+import { uploadVideo, getVideoPath } from "@/lib/supabase";
+
+const videoPath = getVideoPath(
+  workspaceId,
+  videoProjectId,
+  `${clipId}.mp4`
+);
+// Returns: workspaceId/videos/videoProjectId/clipId.mp4
+
+const videoUrl = await uploadVideo(
+  videoBuffer,
+  videoPath,
+  "video/mp4"
+);
+```
+
+### Delete Images
+
+Delete individual or project images:
+
+```typescript
+import { deleteImage, deleteProjectImages } from "@/lib/supabase";
+
+// Delete single image
+await deleteImage(path);
+
+// Delete all images for a project
+await deleteProjectImages(workspaceId, projectId);
+```
+
+### Get Public URL
+
+Get public URL for a stored file:
+
+```typescript
+import { getPublicUrl } from "@/lib/supabase";
+
+const url = getPublicUrl("workspaceId/projectId/result/image.jpg");
+// Returns: https://your-project.supabase.co/storage/v1/object/public/aistudio-bucket/...
+```
+
+### Create Signed Upload URL
+
+For client-side direct uploads:
+
+```typescript
+import { createSignedUploadUrl } from "@/lib/supabase";
+
+const { signedUrl, token, path } = await createSignedUploadUrl(
+  "workspaceId/upload/temp.jpg"
+);
+
+// Client can now upload directly to signedUrl
+```
+
+## Storage Organization
+
+Files are organized with the following structure:
+
+```
+aistudio-bucket/
+├── {workspaceId}/
+│   ├── {projectId}/
+│   │   ├── original/
+│   │   │   └── {imageId}.jpg
+│   │   └── result/
+│   │       └── {imageId}.jpg
+│   ├── video-sources/
+│   │   └── {imageId}.jpg
+│   └── videos/
+│       └── {videoProjectId}/
+│           └── {clipId}.mp4
+```
+
+## Helper Functions
+
+### Path Generators
+
+```typescript
+// Image paths
+getImagePath(
+  workspaceId: string,
+  projectId: string,
+  imageId: string,
+  type: "original" | "result"
+): string
+
+// Video source image paths
+getVideoSourceImagePath(
+  workspaceId: string,
+  imageId: string
+): string
+
+// Video paths
+getVideoPath(
+  workspaceId: string,
+  videoProjectId: string,
+  filename: string
+): string
+```
+
+### Content Type Helpers
+
+```typescript
+import { getExtensionFromContentType } from "@/lib/supabase";
+
+const ext = getExtensionFromContentType("image/jpeg");
+// Returns: "jpg"
+```
+
+## Usage in Workflows
+
+### Image Processing Task
+
+From `trigger/process-image.ts`:
+
+```typescript
+import {
+  getExtensionFromContentType,
+  getImagePath,
+  uploadImage,
+} from "@/lib/supabase";
+
+// Download result from Fal.ai
+const resultImageResponse = await fetch(resultImageUrl);
+const resultImageBuffer = await resultImageResponse.arrayBuffer();
+
+// Determine file extension
+const extension = getExtensionFromContentType(contentType);
+
+// Generate storage path
+const resultPath = getImagePath(
+  image.workspaceId,
+  image.projectId,
+  `${imageId}.${extension}`,
+  "result"
+);
+
+// Upload to Supabase
+const storedResultUrl = await uploadImage(
+  new Uint8Array(resultImageBuffer),
+  resultPath,
+  contentType
+);
+```
+
+### Video Generation Task
+
+From `trigger/generate-video-clip.ts`:
+
+```typescript
+import { getVideoPath, uploadVideo } from "@/lib/supabase";
+
+// Download video from Kling
+const resultVideoResponse = await fetch(resultVideoUrl);
+const resultVideoBuffer = await resultVideoResponse.arrayBuffer();
+
+// Generate storage path
+const videoPath = getVideoPath(
+  workspaceId,
+  videoProjectId,
+  `${clipId}.mp4`
+);
+
+// Upload to Supabase
+const storedVideoUrl = await uploadVideo(
+  new Uint8Array(resultVideoBuffer),
+  videoPath,
+  "video/mp4"
+);
+```
+
+## Error Handling
+
+All storage functions throw errors on failure:
+
+```typescript
+try {
+  const url = await uploadImage(buffer, path, contentType);
+} catch (error) {
+  // Handle upload failure
+  throw new Error(`Failed to upload: ${error.message}`);
+}
+```
+
+## Storage Limits
+
+Supabase free tier includes:
+
+- **500 MB** storage
+- **2 GB** bandwidth per month
+- **50 MB** max file upload size
+
+For production, upgrade to Pro for:
+
+- **100 GB** storage
+- **200 GB** bandwidth
+- **5 GB** max file upload size
+
+## Resources
+
+- [Supabase Documentation](https://supabase.com/docs)
+- [Storage Guide](https://supabase.com/docs/guides/storage)
+- [PostgreSQL Connection Pooling](https://supabase.com/docs/guides/database/connecting-to-postgres#connection-pooler)
+- [Dashboard](https://supabase.com/dashboard)

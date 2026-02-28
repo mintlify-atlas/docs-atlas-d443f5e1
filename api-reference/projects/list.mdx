@@ -1,0 +1,218 @@
+---
+title: "List Projects"
+api: "GET /api/projects"
+description: "Retrieve all projects for the authenticated user's workspace"
+---
+
+## Overview
+
+Retrieves a list of all projects in the authenticated user's workspace. Projects are returned in reverse chronological order (newest first).
+
+## Authentication
+
+Requires an authenticated user session. Only returns projects from the user's workspace.
+
+## Query Parameters
+
+<ParamField query="limit" type="number">
+  Maximum number of projects to return. If not specified, returns all projects.
+  
+  Example: `20`
+</ParamField>
+
+<ParamField query="offset" type="number">
+  Number of projects to skip (for pagination). Use with `limit` for paginated results.
+  
+  Example: `0`
+</ParamField>
+
+<ParamField query="status" type="string">
+  Filter projects by status.
+  
+  **Available values:**
+  - `pending` - Projects with no processed images
+  - `processing` - Projects with images currently being processed
+  - `completed` - Projects where all images are completed
+  - `failed` - Projects where all images failed
+</ParamField>
+
+### Request Example
+
+```bash
+GET /api/projects?limit=10&offset=0&status=completed
+```
+
+## Response
+
+Returns an array of project objects ordered by creation date (newest first).
+
+<ResponseField name="projects" type="array" required>
+  Array of project objects.
+  
+  <ResponseField name="projects[].id" type="string" required>
+    Unique project identifier (UUID format).
+  </ResponseField>
+  
+  <ResponseField name="projects[].workspaceId" type="string" required>
+    The workspace ID this project belongs to.
+  </ResponseField>
+  
+  <ResponseField name="projects[].userId" type="string" required>
+    The ID of the user who created the project.
+  </ResponseField>
+  
+  <ResponseField name="projects[].name" type="string" required>
+    The project name.
+  </ResponseField>
+  
+  <ResponseField name="projects[].styleTemplateId" type="string" required>
+    The style template ID applied to this project.
+  </ResponseField>
+  
+  <ResponseField name="projects[].roomType" type="string | null">
+    The room type classification (e.g., `living-room`, `bedroom`, `kitchen`).
+  </ResponseField>
+  
+  <ResponseField name="projects[].thumbnailUrl" type="string | null">
+    URL to the project thumbnail image. Typically the first uploaded image.
+  </ResponseField>
+  
+  <ResponseField name="projects[].status" type="string" required>
+    Current project status.
+    
+    **Values:**
+    - `pending` - No images processed yet
+    - `processing` - At least one image is being processed
+    - `completed` - All images completed successfully
+    - `failed` - All images failed to process
+  </ResponseField>
+  
+  <ResponseField name="projects[].imageCount" type="number" required>
+    Total number of images in the project.
+  </ResponseField>
+  
+  <ResponseField name="projects[].completedCount" type="number" required>
+    Number of successfully processed images.
+  </ResponseField>
+  
+  <ResponseField name="projects[].createdAt" type="string" required>
+    ISO 8601 timestamp when the project was created.
+  </ResponseField>
+  
+  <ResponseField name="projects[].updatedAt" type="string" required>
+    ISO 8601 timestamp when the project was last updated.
+  </ResponseField>
+</ResponseField>
+
+### Response Example
+
+```json
+[
+  {
+    "id": "a1b2c3d4-5678-90ab-cdef-1234567890ab",
+    "workspaceId": "ws_abc123",
+    "userId": "user_xyz789",
+    "name": "Sunset Villa - Master Bedroom",
+    "styleTemplateId": "modern-scandinavian",
+    "roomType": "bedroom",
+    "thumbnailUrl": "https://storage.example.com/thumbnails/abc123.jpg",
+    "status": "completed",
+    "imageCount": 5,
+    "completedCount": 5,
+    "createdAt": "2024-01-15T10:30:00.000Z",
+    "updatedAt": "2024-01-15T11:45:00.000Z"
+  },
+  {
+    "id": "b2c3d4e5-6789-01bc-def2-234567890abc",
+    "workspaceId": "ws_abc123",
+    "userId": "user_xyz789",
+    "name": "Downtown Condo - Kitchen Renovation",
+    "styleTemplateId": "minimalist-white",
+    "roomType": "kitchen",
+    "thumbnailUrl": "https://storage.example.com/thumbnails/def456.jpg",
+    "status": "processing",
+    "imageCount": 8,
+    "completedCount": 3,
+    "createdAt": "2024-01-14T09:15:00.000Z",
+    "updatedAt": "2024-01-14T10:22:00.000Z"
+  },
+  {
+    "id": "c3d4e5f6-7890-12cd-ef34-34567890abcd",
+    "workspaceId": "ws_abc123",
+    "userId": "user_xyz789",
+    "name": "Mountain Retreat - Exterior",
+    "styleTemplateId": "rustic-modern",
+    "roomType": "exterior",
+    "thumbnailUrl": null,
+    "status": "pending",
+    "imageCount": 0,
+    "completedCount": 0,
+    "createdAt": "2024-01-13T14:20:00.000Z",
+    "updatedAt": "2024-01-13T14:20:00.000Z"
+  }
+]
+```
+
+## Implementation Details
+
+### Query Process
+
+1. **Authentication** - Validates user session via Better-Auth
+2. **Workspace Lookup** - Retrieves user's workspace ID
+3. **Database Query** - Fetches projects with optional filters
+4. **Ordering** - Results sorted by `createdAt DESC` (newest first)
+
+### Database Query
+
+```sql
+SELECT * FROM project
+WHERE workspace_id = $workspaceId
+  AND ($status IS NULL OR status = $status)
+ORDER BY created_at DESC
+LIMIT $limit OFFSET $offset;
+```
+
+### Performance Considerations
+
+- **Indexed Fields**: Queries use indexed `workspace_id`, `status`, and `created_at` columns
+- **Denormalized Counts**: `imageCount` and `completedCount` are pre-calculated for fast reads
+- **Pagination**: Use `limit` and `offset` for large datasets to reduce payload size
+
+## Project Statistics
+
+To get aggregated statistics across all projects, use the `getProjectStats` query:
+
+```typescript
+const stats = await getProjectStats(workspaceId);
+// Returns:
+{
+  totalProjects: 45,
+  completedProjects: 38,
+  processingProjects: 5,
+  totalImages: 342
+}
+```
+
+## Status Tracking
+
+Project status is automatically updated when image processing completes:
+
+- **pending** → **processing**: When first image starts processing
+- **processing** → **completed**: When all images complete successfully
+- **processing** → **failed**: When all images fail (and none succeeded)
+
+The status update logic is in `/lib/db/queries.ts:updateProjectCounts` (lines 404-516).
+
+## Related Endpoints
+
+- Create new project: See [Create Project](/api-reference/projects/create)
+- Get single project with images: See [Get Project](/api-reference/projects/get)
+- Delete project: `DELETE /api/projects/:id`
+
+## Source Code Reference
+
+Implemented in:
+- Server Action: `/app/dashboard/page.tsx:getProjects` (line 30)
+- Database Query: `/lib/db/queries.ts:getProjects` (lines 279-305)
+- Stats Query: `/lib/db/queries.ts:getProjectStats` (lines 333-372)
+- Schema: `/lib/db/schema.ts:project` (lines 164-196)

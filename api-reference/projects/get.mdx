@@ -1,0 +1,295 @@
+---
+title: 'Get Project'
+api: 'GET /api/projects/:id'
+description: 'Retrieve a single project with all associated images and generation history'
+---
+
+## Overview
+
+Retrieves detailed information about a specific project, including all image generations, version history, and processing status. This endpoint returns both the project metadata and all images that have been processed within the project.
+
+## Authentication
+
+Requires an authenticated user session. Users can only access projects within their workspace.
+
+## Path Parameters
+
+<ParamField path="id" type="string" required>
+  The unique project identifier (UUID format).
+  
+  Example: `a1b2c3d4-5678-90ab-cdef-1234567890ab`
+</ParamField>
+
+### Request Example
+
+```bash
+GET /api/projects/a1b2c3d4-5678-90ab-cdef-1234567890ab
+```
+
+## Response
+
+Returns a project object with nested images array.
+
+<ResponseField name="project" type="object" required>
+  The project object.
+  
+  <ResponseField name="project.id" type="string" required>
+    Unique project identifier (UUID format).
+  </ResponseField>
+  
+  <ResponseField name="project.workspaceId" type="string" required>
+    The workspace ID this project belongs to.
+  </ResponseField>
+  
+  <ResponseField name="project.userId" type="string" required>
+    The ID of the user who created the project.
+  </ResponseField>
+  
+  <ResponseField name="project.name" type="string" required>
+    The project name.
+  </ResponseField>
+  
+  <ResponseField name="project.styleTemplateId" type="string" required>
+    The style template ID applied to images in this project.
+  </ResponseField>
+  
+  <ResponseField name="project.roomType" type="string | null">
+    The room type classification (e.g., `living-room`, `bedroom`, `kitchen`).
+  </ResponseField>
+  
+  <ResponseField name="project.thumbnailUrl" type="string | null">
+    URL to the project thumbnail image.
+  </ResponseField>
+  
+  <ResponseField name="project.status" type="string" required>
+    Current project status: `pending`, `processing`, `completed`, or `failed`.
+  </ResponseField>
+  
+  <ResponseField name="project.imageCount" type="number" required>
+    Total number of images in the project (including all versions).
+  </ResponseField>
+  
+  <ResponseField name="project.completedCount" type="number" required>
+    Number of successfully processed images.
+  </ResponseField>
+  
+  <ResponseField name="project.createdAt" type="string" required>
+    ISO 8601 timestamp when the project was created.
+  </ResponseField>
+  
+  <ResponseField name="project.updatedAt" type="string" required>
+    ISO 8601 timestamp when the project was last updated.
+  </ResponseField>
+</ResponseField>
+
+<ResponseField name="images" type="array" required>
+  Array of image generation objects, ordered by creation date (newest first).
+  
+  <ResponseField name="images[].id" type="string" required>
+    Unique image generation identifier (UUID).
+  </ResponseField>
+  
+  <ResponseField name="images[].workspaceId" type="string" required>
+    The workspace ID.
+  </ResponseField>
+  
+  <ResponseField name="images[].userId" type="string" required>
+    The ID of the user who created this image generation.
+  </ResponseField>
+  
+  <ResponseField name="images[].projectId" type="string" required>
+    The parent project ID.
+  </ResponseField>
+  
+  <ResponseField name="images[].originalImageUrl" type="string" required>
+    URL to the original uploaded image before AI processing.
+  </ResponseField>
+  
+  <ResponseField name="images[].resultImageUrl" type="string | null">
+    URL to the AI-generated result image. `null` if still processing or failed.
+  </ResponseField>
+  
+  <ResponseField name="images[].prompt" type="string" required>
+    The AI prompt used for image generation. Typically combines the style template with room-specific instructions.
+  </ResponseField>
+  
+  <ResponseField name="images[].version" type="number" required>
+    Version number for edit history tracking. Starts at `1` for original, increments for each edit.
+  </ResponseField>
+  
+  <ResponseField name="images[].parentId" type="string | null">
+    The ID of the root image in the version chain. `null` for root images (version 1).
+  </ResponseField>
+  
+  <ResponseField name="images[].status" type="string" required>
+    Processing status of this image.
+    
+    **Values:**
+    - `pending` - Queued for processing
+    - `processing` - Currently being processed by AI
+    - `completed` - Successfully processed
+    - `failed` - Processing failed
+  </ResponseField>
+  
+  <ResponseField name="images[].errorMessage" type="string | null">
+    Error message if status is `failed`.
+  </ResponseField>
+  
+  <ResponseField name="images[].metadata" type="object | null">
+    Additional metadata about the generation (model used, processing time, cost, etc.).
+  </ResponseField>
+  
+  <ResponseField name="images[].createdAt" type="string" required>
+    ISO 8601 timestamp when the image was uploaded.
+  </ResponseField>
+  
+  <ResponseField name="images[].updatedAt" type="string" required>
+    ISO 8601 timestamp when the image status was last updated.
+  </ResponseField>
+</ResponseField>
+
+### Success Response Example
+
+```json
+{
+  "project": {
+    "id": "a1b2c3d4-5678-90ab-cdef-1234567890ab",
+    "workspaceId": "ws_abc123",
+    "userId": "user_xyz789",
+    "name": "Sunset Villa - Master Bedroom",
+    "styleTemplateId": "modern-scandinavian",
+    "roomType": "bedroom",
+    "thumbnailUrl": "https://storage.example.com/thumbnails/abc123.jpg",
+    "status": "completed",
+    "imageCount": 3,
+    "completedCount": 3,
+    "createdAt": "2024-01-15T10:30:00.000Z",
+    "updatedAt": "2024-01-15T11:45:00.000Z"
+  },
+  "images": [
+    {
+      "id": "img_001",
+      "workspaceId": "ws_abc123",
+      "userId": "user_xyz789",
+      "projectId": "a1b2c3d4-5678-90ab-cdef-1234567890ab",
+      "originalImageUrl": "https://storage.example.com/originals/photo1.jpg",
+      "resultImageUrl": "https://storage.example.com/results/photo1_edited.jpg",
+      "prompt": "Modern Scandinavian bedroom with warm natural light, minimalist furniture, and neutral tones",
+      "version": 1,
+      "parentId": null,
+      "status": "completed",
+      "errorMessage": null,
+      "metadata": {
+        "model": "flux-pro/v1.1",
+        "processingTime": 12.5,
+        "cost": 0.05
+      },
+      "createdAt": "2024-01-15T10:35:00.000Z",
+      "updatedAt": "2024-01-15T10:35:15.000Z"
+    },
+    {
+      "id": "img_002",
+      "workspaceId": "ws_abc123",
+      "userId": "user_xyz789",
+      "projectId": "a1b2c3d4-5678-90ab-cdef-1234567890ab",
+      "originalImageUrl": "https://storage.example.com/results/photo1_edited.jpg",
+      "resultImageUrl": "https://storage.example.com/results/photo1_edited_v2.jpg",
+      "prompt": "Modern Scandinavian bedroom with warmer lighting and added decorative pillows",
+      "version": 2,
+      "parentId": "img_001",
+      "status": "completed",
+      "errorMessage": null,
+      "metadata": {
+        "model": "flux-pro/v1.1",
+        "processingTime": 11.8,
+        "cost": 0.05
+      },
+      "createdAt": "2024-01-15T11:20:00.000Z",
+      "updatedAt": "2024-01-15T11:20:12.000Z"
+    }
+  ]
+}
+```
+
+### Error Response - Project Not Found
+
+```json
+null
+```
+
+If the project doesn't exist or doesn't belong to the user's workspace, the endpoint returns `null`.
+
+## Implementation Details
+
+### Access Control
+
+The endpoint performs workspace-based authorization:
+
+1. Authenticates the user session
+2. Retrieves user's workspace ID
+3. Fetches project and verifies `project.workspaceId` matches user's workspace
+4. Returns `null` if workspace mismatch or project not found
+
+This ensures users can only access projects within their workspace, providing workspace-level isolation.
+
+### Version History
+
+Images support version tracking for edit history:
+
+- **Root Image** (version 1): Original upload with `parentId = null`
+- **Edited Versions** (version 2+): Re-processed images with `parentId` pointing to the root
+
+All versions share the same `parentId`, creating a version chain:
+
+```
+Root Image (v1, parentId=null)
+  ├─ Edit v2 (parentId → Root)
+  ├─ Edit v3 (parentId → Root)
+  └─ Edit v4 (parentId → Root)
+```
+
+### Database Query
+
+The endpoint executes two queries:
+
+```sql
+-- Get project
+SELECT * FROM project WHERE id = $projectId LIMIT 1;
+
+-- Get all images for project (ordered newest first)
+SELECT * FROM image_generation
+WHERE project_id = $projectId
+ORDER BY created_at DESC;
+```
+
+### Image Status Updates
+
+When images complete processing, the project's `completedCount` and `status` are automatically updated:
+
+- **Trigger**: Image status changes to `completed`
+- **Action**: Calls `updateProjectCounts(projectId)` to recalculate
+- **Side Effect**: May create invoice line item on first completed image
+
+## Payment Integration
+
+Projects require payment before AI processing begins:
+
+- **Invoice-eligible workspaces**: Automatically billed via invoice
+- **Other workspaces**: Require Stripe checkout completion
+- **Payment status**: Checked via `getProjectPaymentStatus(projectId)`
+
+Payment is handled separately from project creation - see `/lib/actions/payments.ts`.
+
+## Related Endpoints
+
+- Create project: See [Create Project](/api-reference/projects/create)
+- List projects: See [List Projects](/api-reference/projects/list)
+- Process image: `POST /api/process-image`
+- Download all images: `GET /api/download/:projectId`
+
+## Source Code Reference
+
+Implemented in:
+- Page Component: `/app/dashboard/[id]/page.tsx:ProjectDetailPage` (lines 15-85)
+- Database Query: `/lib/db/queries.ts:getProjectById` (lines 307-331)
+- Schema: `/lib/db/schema.ts` (project: lines 164-196, imageGeneration: lines 202-241)

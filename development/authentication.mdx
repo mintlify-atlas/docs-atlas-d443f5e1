@@ -1,0 +1,603 @@
+---
+title: Authentication
+description: Better Auth implementation with workspace management and role-based access control
+---
+
+## Overview
+
+AI Studio uses **Better Auth** for authentication, providing:
+
+- Email/password authentication with verification
+- Session-based auth with HttpOnly cookies
+- Workspace-based multi-tenancy
+- Role-based access control (owner, admin, member)
+- Admin impersonation for support
+- Password reset flows
+
+## Better Auth Configuration
+
+The auth system is configured in `lib/auth.ts`:
+
+```typescript
+// lib/auth.ts:27
+export const auth = betterAuth({
+  baseURL: getAuthBaseUrl(),
+  database: drizzleAdapter(db, {
+    provider: "pg",
+    schema: { user, session, account, verification, workspace },
+  }),
+  emailAndPassword: {
+    enabled: true,
+    minPasswordLength: 8,
+    requireEmailVerification: true,
+    sendResetPassword: async ({ user: resetUser, url, token }) => {
+      const resetLink = `${baseUrl}/reset-password?token=${token}`;
+      await sendPasswordResetEmail(resetUser.email, resetUser.name, resetLink);
+    },
+    resetPasswordTokenExpiresIn: 60 * 60, // 1 hour
+  },
+  emailVerification: {
+    sendVerificationEmail: async ({ user: verifyUser, url }) => {
+      await sendVerificationEmail(verifyUser.email, verifyUser.name, url);
+    },
+    sendOnSignUp: true,
+    sendOnSignIn: true, // Resend verification on unverified sign-in attempts
+    autoSignInAfterVerification: true,
+  },
+  session: {
+    expiresIn: 60 * 60 * 24 * 7, // 7 days
+    updateAge: 60 * 60 * 24, // 1 day (refresh session if older than this)
+  },
+  plugins: [
+    admin({
+      impersonationSessionDuration: 60 * 60 * 24, // 1 day
+    }),
+  ],
+  databaseHooks: {
+    user: {
+      create: {
+        after: async (createdUser) => {
+          // Auto-create workspace on signup
+          const slug = createdUser.email
+            .split("@")[0]
+            .toLowerCase()
+            .replace(/[^a-z0-9]/g, "-");
+          const workspaceId = nanoid();
+
+          await db.insert(workspace).values({
+            id: workspaceId,
+            name: `${createdUser.name}'s Workspace`,
+            slug: `${slug}-${workspaceId.slice(0, 6)}`,
+          });
+
+          await db
+            .update(user)
+            .set({ workspaceId, role: "owner" })
+            .where(eq(user.id, createdUser.id));
+        },
+      },
+    },
+  },
+});
+```
+
+## API Routes
+
+Better Auth provides a single catch-all route:
+
+```typescript
+// app/api/auth/[...all]/route.ts:1
+import { toNextJsHandler } from "better-auth/next-js";
+import { auth } from "@/lib/auth";
+
+export const { GET, POST } = toNextJsHandler(auth);
+```
+
+This handles all auth endpoints:
+
+- `POST /api/auth/sign-up/email` - Email/password signup
+- `POST /api/auth/sign-in/email` - Email/password signin
+- `POST /api/auth/sign-out` - Sign out
+- `POST /api/auth/reset-password` - Request password reset
+- `POST /api/auth/verify-email` - Verify email
+- `GET /api/auth/session` - Get current session
+
+## User Signup Flow
+
+1. **User submits signup form** with email, password, name
+2. **Better Auth creates user** in database
+3. **Database hook fires** (`databaseHooks.user.create.after`)
+4. **Workspace is auto-created** with user as owner
+5. **Verification email sent** to user
+6. **User clicks verification link** to activate account
+7. **Auto sign-in** after verification
+
+**Implementation:**
+
+```typescript
+// lib/auth.ts:117
+databaseHooks: {
+  user: {
+    create: {
+      after: async (createdUser) => {
+        // Generate workspace slug from email
+        const slug = createdUser.email
+          .split("@")[0]
+          .toLowerCase()
+          .replace(/[^a-z0-9]/g, "-");
+        const workspaceId = nanoid();
+
+        // Create workspace
+        await db.insert(workspace).values({
+          id: workspaceId,
+          name: `${createdUser.name}'s Workspace`,
+          slug: `${slug}-${workspaceId.slice(0, 6)}`,
+        });
+
+        // Link user to workspace as owner
+        await db
+          .update(user)
+          .set({ workspaceId, role: "owner" })
+          .where(eq(user.id, createdUser.id));
+      },
+    },
+  },
+}
+```
+
+## Session Management
+
+### Server Components
+
+Access session in Server Components:
+
+```typescript
+import { auth } from "@/lib/auth";
+import { headers } from "next/headers";
+
+export default async function DashboardPage() {
+  const session = await auth.api.getSession({
+    headers: await headers(),
+  });
+
+  if (!session) {
+    redirect("/login");
+  }
+
+  return <div>Welcome, {session.user.name}!</div>;
+}
+```
+
+### Server Actions
+
+Validate session in Server Actions:
+
+```typescript
+// lib/actions/projects.ts:31
+export async function createProjectAction(
+  formData: FormData
+): Promise<ActionResult<Project>> {
+  const session = await auth.api.getSession({
+    headers: await headers(),
+  });
+
+  if (!session) {
+    return { success: false, error: "Unauthorized" };
+  }
+
+  // Get user's workspace
+  const currentUser = await db
+    .select()
+    .from(user)
+    .where(eq(user.id, session.user.id))
+    .limit(1);
+
+  if (!currentUser[0]?.workspaceId) {
+    return { success: false, error: "Workspace not found" };
+  }
+
+  // Create project in user's workspace
+  const project = await createProjectQuery({
+    workspaceId: currentUser[0].workspaceId,
+    userId: session.user.id,
+    name: formData.get("name") as string,
+    styleTemplateId: formData.get("styleTemplateId") as string,
+  });
+
+  return { success: true, data: project };
+}
+```
+
+### Client Components
+
+Use Better Auth client hooks:
+
+```typescript
+import { useSession } from "@/lib/auth-client";
+
+export function UserMenu() {
+  const { data: session, isPending } = useSession();
+
+  if (isPending) {
+    return <Skeleton />;
+  }
+
+  if (!session) {
+    return <LoginButton />;
+  }
+
+  return (
+    <div>
+      <Avatar src={session.user.image} />
+      <span>{session.user.name}</span>
+    </div>
+  );
+}
+```
+
+## Role-Based Access Control
+
+### User Roles
+
+```typescript
+// lib/db/schema.ts:65
+role: text("role").notNull().default("member"), // "owner" | "admin" | "member"
+```
+
+**Permissions:**
+
+- **owner** - Full workspace control, billing, delete workspace
+- **admin** - Manage users, all projects, settings (no billing)
+- **member** - Create and manage own projects only
+
+### System Admin
+
+```typescript
+// lib/db/schema.ts:68
+isSystemAdmin: boolean("is_system_admin").notNull().default(false),
+```
+
+Super admin flag for platform administrators with cross-workspace access.
+
+### Permission Checks
+
+```typescript
+// Check if user is workspace owner
+function isWorkspaceOwner(user: User): boolean {
+  return user.role === "owner";
+}
+
+// Check if user is admin or owner
+function canManageWorkspace(user: User): boolean {
+  return user.role === "owner" || user.role === "admin";
+}
+
+// Check if user can access project
+async function canAccessProject(
+  userId: string,
+  projectId: string
+): Promise<boolean> {
+  const user = await getUserById(userId);
+  const project = await getProjectById(projectId);
+
+  // User must be in same workspace
+  if (user.workspaceId !== project.workspaceId) {
+    return false;
+  }
+
+  // Owner/admin can access all projects
+  if (user.role === "owner" || user.role === "admin") {
+    return true;
+  }
+
+  // Member can only access own projects
+  return project.userId === userId;
+}
+```
+
+## Workspace Invitations
+
+Invite users to join a workspace:
+
+```typescript
+// lib/actions/invitations.ts
+export async function createInvitationAction(
+  email: string,
+  role: UserRole
+): Promise<ActionResult<Invitation>> {
+  const session = await auth.api.getSession({ headers: await headers() });
+  
+  if (!session) {
+    return { success: false, error: "Unauthorized" };
+  }
+
+  const user = await getUserById(session.user.id);
+
+  // Only owner/admin can invite
+  if (user.role !== "owner" && user.role !== "admin") {
+    return { success: false, error: "Insufficient permissions" };
+  }
+
+  // Create invitation
+  const token = nanoid(32);
+  const invitation = await db.insert(invitation).values({
+    id: nanoid(),
+    email,
+    workspaceId: user.workspaceId,
+    role,
+    token,
+    expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 days
+  });
+
+  // Send invitation email
+  await sendInvitationEmail(email, user.workspace.name, token);
+
+  return { success: true, data: invitation };
+}
+```
+
+**Accept invitation:**
+
+```typescript
+export async function acceptInvitationAction(
+  token: string
+): Promise<ActionResult<void>> {
+  const session = await auth.api.getSession({ headers: await headers() });
+  
+  if (!session) {
+    return { success: false, error: "Must be signed in" };
+  }
+
+  // Find invitation
+  const invite = await db.query.invitation.findFirst({
+    where: eq(invitation.token, token),
+  });
+
+  if (!invite) {
+    return { success: false, error: "Invalid invitation" };
+  }
+
+  if (invite.expiresAt < new Date()) {
+    return { success: false, error: "Invitation expired" };
+  }
+
+  if (invite.acceptedAt) {
+    return { success: false, error: "Invitation already accepted" };
+  }
+
+  // Update user's workspace
+  await db
+    .update(user)
+    .set({
+      workspaceId: invite.workspaceId,
+      role: invite.role,
+    })
+    .where(eq(user.id, session.user.id));
+
+  // Mark invitation as accepted
+  await db
+    .update(invitation)
+    .set({ acceptedAt: new Date() })
+    .where(eq(invitation.id, invite.id));
+
+  return { success: true, data: undefined };
+}
+```
+
+## Admin Impersonation
+
+Support staff can impersonate users for debugging:
+
+```typescript
+// lib/actions/admin.ts
+export async function impersonateUserAction(
+  targetUserId: string
+): Promise<ActionResult<void>> {
+  const session = await auth.api.getSession({ headers: await headers() });
+  
+  if (!session) {
+    return { success: false, error: "Unauthorized" };
+  }
+
+  const admin = await getUserById(session.user.id);
+
+  // Only system admins can impersonate
+  if (!admin.isSystemAdmin) {
+    return { success: false, error: "Insufficient permissions" };
+  }
+
+  // Use Better Auth admin plugin
+  await auth.api.admin.impersonate({
+    userId: targetUserId,
+    adminId: session.user.id,
+  });
+
+  return { success: true, data: undefined };
+}
+```
+
+Impersonation is tracked in the `session` table:
+
+```typescript
+// lib/db/schema.ts:90
+impersonatedBy: text("impersonated_by").references(() => user.id, {
+  onDelete: "set null",
+}),
+```
+
+## Email Verification
+
+Email verification is required before users can access the platform:
+
+```typescript
+// lib/auth.ts:98
+emailVerification: {
+  sendVerificationEmail: async ({ user: verifyUser, url }) => {
+    await sendVerificationEmail(verifyUser.email, verifyUser.name, url);
+  },
+  sendOnSignUp: true,
+  sendOnSignIn: true, // Resend if user tries to sign in unverified
+  autoSignInAfterVerification: true,
+}
+```
+
+**Verification email template:**
+
+```typescript
+// emails/verify-email.tsx
+export function VerifyEmail({ name, url }: { name: string; url: string }) {
+  return (
+    <Html>
+      <Head />
+      <Preview>Verify your email address</Preview>
+      <Body>
+        <Container>
+          <Heading>Welcome to AI Studio, {name}!</Heading>
+          <Text>Click the button below to verify your email address:</Text>
+          <Button href={url}>Verify Email</Button>
+          <Text>This link expires in 24 hours.</Text>
+        </Container>
+      </Body>
+    </Html>
+  );
+}
+```
+
+## Password Reset
+
+Users can request password reset links:
+
+```typescript
+// lib/auth.ts:37
+sendResetPassword: async ({ user: resetUser, url, token }) => {
+  // Extract token from URL
+  const resetToken = extractTokenFromUrl(url) || token;
+  const resetLink = `${baseUrl}/reset-password?token=${resetToken}`;
+  
+  await sendPasswordResetEmail(resetUser.email, resetUser.name, resetLink);
+},
+resetPasswordTokenExpiresIn: 60 * 60, // 1 hour
+```
+
+**Reset password page:**
+
+```typescript
+// app/(auth)/reset-password/page.tsx
+export default async function ResetPasswordPage({
+  searchParams,
+}: {
+  searchParams: { token?: string };
+}) {
+  const token = searchParams.token;
+
+  if (!token) {
+    return <RequestResetForm />;
+  }
+
+  return <ResetPasswordForm token={token} />;
+}
+```
+
+## User Banning
+
+Better Auth admin plugin supports user banning:
+
+```typescript
+// lib/db/schema.ts:71
+banned: boolean("banned").notNull().default(false),
+banReason: text("ban_reason"),
+banExpires: timestamp("ban_expires"),
+```
+
+**Ban a user:**
+
+```typescript
+export async function banUserAction(
+  userId: string,
+  reason: string,
+  expiresAt?: Date
+): Promise<ActionResult<void>> {
+  const session = await auth.api.getSession({ headers: await headers() });
+  
+  if (!session) {
+    return { success: false, error: "Unauthorized" };
+  }
+
+  const admin = await getUserById(session.user.id);
+
+  if (!admin.isSystemAdmin) {
+    return { success: false, error: "Insufficient permissions" };
+  }
+
+  await db
+    .update(user)
+    .set({
+      banned: true,
+      banReason: reason,
+      banExpires: expiresAt,
+    })
+    .where(eq(user.id, userId));
+
+  // Invalidate all sessions
+  await db
+    .delete(session)
+    .where(eq(session.userId, userId));
+
+  return { success: true, data: undefined };
+}
+```
+
+## Security Best Practices
+
+### Password Security
+
+- **Bcrypt hashing** - Passwords hashed with bcrypt (built into Better Auth)
+- **Minimum length** - 8 characters required
+- **No password policies** - Let users choose passwords (use passkeys in future)
+
+### Session Security
+
+- **HttpOnly cookies** - Session tokens not accessible via JavaScript
+- **Secure cookies** - Only sent over HTTPS in production
+- **Short expiration** - 7 days, refreshed on activity
+- **IP & User Agent tracking** - Detect suspicious activity
+
+### CSRF Protection
+
+- **SameSite cookies** - Prevent CSRF attacks
+- **Origin validation** - Better Auth validates request origin
+
+### Rate Limiting
+
+Implement rate limiting for auth endpoints:
+
+```typescript
+// middleware.ts
+import { ratelimit } from "@/lib/rate-limit";
+
+export async function middleware(request: NextRequest) {
+  if (request.nextUrl.pathname.startsWith("/api/auth")) {
+    const ip = request.ip ?? "127.0.0.1";
+    const { success } = await ratelimit.limit(ip);
+
+    if (!success) {
+      return new Response("Too many requests", { status: 429 });
+    }
+  }
+}
+```
+
+## Environment Variables
+
+Required configuration:
+
+```bash
+# Better Auth
+BETTER_AUTH_URL=https://yourdomain.com
+BETTER_AUTH_SECRET=... # Generate with: openssl rand -base64 32
+
+# Email (for verification and password reset)
+RESEND_API_KEY=re_...
+```
+
+See [Database Schema](/development/schema) for authentication table details.

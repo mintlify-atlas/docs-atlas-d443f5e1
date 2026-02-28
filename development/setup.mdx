@@ -1,0 +1,257 @@
+---
+title: 'Development Setup'
+description: 'Complete guide to setting up AI Studio for local development'
+---
+
+## Prerequisites
+
+Before getting started with AI Studio development, ensure you have the following installed:
+
+- **Node.js 20+** - [Download here](https://nodejs.org/)
+- **pnpm 8+** - Install via `npm install -g pnpm`
+- **PostgreSQL** - Local installation or [Supabase account](https://supabase.com/)
+- **Git** - [Download here](https://git-scm.com/)
+
+## Quick Start
+
+Get AI Studio running locally in under 5 minutes.
+
+<Steps>
+  <Step title="Clone the repository">
+    ```bash
+    git clone https://github.com/codehagen/proppi.git
+    cd proppi
+    ```
+  </Step>
+
+  <Step title="Install dependencies">
+    AI Studio uses pnpm for package management:
+    ```bash
+    pnpm install
+    ```
+  </Step>
+
+  <Step title="Set up environment variables">
+    Copy the example environment file:
+    ```bash
+    cp .env.example .env.local
+    ```
+    
+    Update `.env.local` with your credentials. See the [Environment Variables](/development/environment) guide for details.
+  </Step>
+
+  <Step title="Initialize the database">
+    Push the database schema to your PostgreSQL instance:
+    ```bash
+    pnpm db:push
+    ```
+    
+    This creates all necessary tables using Drizzle ORM.
+  </Step>
+
+  <Step title="Configure Trigger.dev (Background Jobs)">
+    1. Create a free account at [cloud.trigger.dev](https://cloud.trigger.dev)
+    2. Get your DEV secret key from the API Keys page
+    3. Add it to `.env.local`:
+    ```env
+    TRIGGER_SECRET_KEY=tr_dev_xxxxxxxxxx
+    ```
+  </Step>
+
+  <Step title="Start development servers">
+    AI Studio requires two servers running simultaneously:
+    
+    **Terminal 1** - Next.js development server:
+    ```bash
+    pnpm dev
+    ```
+    
+    **Terminal 2** - Trigger.dev background job processor:
+    ```bash
+    pnpm trigger
+    ```
+    
+    Your application will be available at [http://localhost:3000](http://localhost:3000)
+  </Step>
+</Steps>
+
+## Available Commands
+
+AI Studio provides several npm scripts for development and database management:
+
+### Development
+
+```bash
+# Start Next.js development server
+pnpm dev
+
+# Start Trigger.dev development server (background jobs)
+pnpm trigger
+
+# Build for production
+pnpm build
+
+# Start production server
+pnpm start
+
+# Run ESLint code quality checks
+pnpm lint
+```
+
+### Database Operations
+
+```bash
+# Push schema changes to database (recommended for development)
+pnpm db:push
+
+# Generate migration files from schema changes
+pnpm db:generate
+
+# Apply migrations to database
+pnpm db:migrate
+
+# Open Drizzle Studio (database GUI)
+pnpm db:studio
+```
+
+See the [Database Setup](/development/database) guide for more details on database operations.
+
+### Email Development
+
+```bash
+# Preview email templates in browser
+pnpm email
+```
+
+This starts a preview server for React Email templates located in the `emails/` directory.
+
+### Background Jobs
+
+```bash
+# Run Trigger.dev workflows locally
+pnpm trigger
+
+# Deploy Trigger.dev workflows to production
+pnpm trigger:deploy
+```
+
+## Project Structure
+
+Understanding the codebase organization:
+
+```
+proppi/
+├── app/                    # Next.js App Router
+│   ├── api/               # API routes
+│   │   ├── auth/         # Better Auth endpoints
+│   │   └── edit-photo/   # Fal.ai image processing
+│   ├── dashboard/         # Main dashboard pages
+│   │   ├── page.tsx      # Projects grid/table view
+│   │   ├── settings/     # Workspace & team settings
+│   │   └── [id]/         # Project detail pages
+│   └── admin/            # Admin panel
+│       ├── users/        # User management
+│       └── workspaces/   # Workspace oversight
+├── components/            # React components
+│   ├── ui/               # shadcn/ui base components
+│   ├── dashboard/        # Dashboard-specific components
+│   ├── projects/         # Project creation workflow
+│   ├── settings/         # Settings page components
+│   ├── admin/            # Admin panel components
+│   └── tables/           # Data tables with virtual scrolling
+├── lib/                   # Core utilities
+│   ├── db/               # Database client & schema
+│   │   ├── index.ts      # Drizzle client configuration
+│   │   └── schema.ts     # Database table definitions
+│   ├── actions/          # Server Actions
+│   ├── auth.ts           # Better Auth configuration
+│   ├── style-templates.ts # AI style templates
+│   └── siteconfig.ts     # Site configuration
+├── hooks/                 # React hooks (use-*.ts)
+├── emails/                # React Email templates
+├── trigger/               # Trigger.dev workflows
+├── public/                # Static assets
+└── drizzle/              # Generated migrations
+```
+
+## Development Workflow
+
+### File Naming Conventions
+
+- **Components & Routes**: kebab-case (e.g., `project-detail-content.tsx`)
+- **Hooks**: `use-*.ts` or `use-*.tsx` pattern
+- **API Routes**: `route.ts` in App Router directories
+- **Server Actions**: `actions.ts` in feature directories
+
+### Coding Standards
+
+- **TypeScript**: All code should be TypeScript (`.ts` or `.tsx`)
+- **Linting**: Run `pnpm lint` before committing
+- **Styling**: Use Tailwind CSS utility classes
+- **Components**: Follow existing shadcn/ui patterns
+
+### Commit Guidelines
+
+AI Studio follows [Conventional Commits](https://www.conventionalcommits.org/):
+
+```bash
+feat: add video wizard step
+fix: handle upload errors
+docs: update API documentation
+refactor: simplify image processing logic
+chore: update dependencies
+```
+
+## Troubleshooting
+
+### Port Already in Use
+
+If port 3000 is already in use:
+```bash
+# Kill the process using port 3000
+lsof -ti:3000 | xargs kill -9
+
+# Or run on a different port
+pnpm dev -- -p 3001
+```
+
+### Database Connection Issues
+
+1. Verify your `DATABASE_URL` in `.env.local`
+2. Check PostgreSQL is running: `psql -U postgres -c "SELECT version();"`
+3. For Supabase, ensure you're using the Transaction pooler URL (port 6543)
+
+### Trigger.dev Not Starting
+
+1. Ensure `TRIGGER_SECRET_KEY` is set in `.env.local`
+2. Verify you're using the DEV key (starts with `tr_dev_`)
+3. Check your account at [cloud.trigger.dev](https://cloud.trigger.dev)
+
+### Module Not Found Errors
+
+```bash
+# Clear node_modules and reinstall
+rm -rf node_modules
+pnpm install
+
+# Clear Next.js cache
+rm -rf .next
+pnpm dev
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Environment Variables" icon="key" href="/development/environment">
+    Configure all required environment variables for local development
+  </Card>
+  <Card title="Database Setup" icon="database" href="/development/database">
+    Learn about database schema, migrations, and Drizzle ORM
+  </Card>
+  <Card title="API Reference" icon="code" href="/api-reference/introduction">
+    Explore available API endpoints and server actions
+  </Card>
+  <Card title="Deployment" icon="rocket" href="/development/deployment">
+    Deploy AI Studio to production environments
+  </Card>
+</CardGroup>

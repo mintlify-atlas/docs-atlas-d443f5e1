@@ -1,0 +1,808 @@
+---
+title: Database Schema
+description: Complete PostgreSQL schema documentation for AI Studio using Drizzle ORM
+---
+
+## Overview
+
+AI Studio uses **PostgreSQL** (via Supabase) with **Drizzle ORM** for type-safe database access. The schema is defined in `lib/db/schema.ts` and organized into logical sections:
+
+1. **Workspace & Users** - Multi-tenant organization
+2. **Authentication** - Better Auth tables
+3. **Image Projects** - Photo enhancement workflows
+4. **Video Projects** - Video creation workflows
+5. **Billing** - Invoices and payments
+6. **Affiliate** - Referral and commission tracking
+
+## Core Tables
+
+### Workspace
+
+The top-level organizational unit for multi-tenancy.
+
+```typescript
+// lib/db/schema.ts:15
+export const workspace = pgTable("workspace", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  slug: text("slug").notNull().unique(),
+
+  // Company details (collected during onboarding)
+  organizationNumber: text("organization_number"), // Norwegian org number
+  contactEmail: text("contact_email"),
+  contactPerson: text("contact_person"),
+
+  // White-label branding
+  logo: text("logo"),
+  primaryColor: text("primary_color"),
+  secondaryColor: text("secondary_color"),
+
+  // Onboarding status
+  onboardingCompleted: boolean("onboarding_completed").notNull().default(false),
+
+  // Admin/billing fields
+  status: text("status").notNull().default("active"), // "active" | "suspended" | "trial"
+  plan: text("plan").notNull().default("free"), // "free" | "pro" | "enterprise"
+  suspendedAt: timestamp("suspended_at"),
+  suspendedReason: text("suspended_reason"),
+
+  // Invoice eligibility (for Norwegian B2B customers)
+  invoiceEligible: boolean("invoice_eligible").notNull().default(false),
+  invoiceEligibleAt: timestamp("invoice_eligible_at"),
+  invitedByAdmin: boolean("invited_by_admin").notNull().default(false),
+
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+```
+
+**Key Features:**
+- **Multi-tenant** - All data scoped to workspace
+- **White-label** - Custom branding per workspace
+- **Invoice eligibility** - Norwegian B2B customers can use invoice payments
+- **Status management** - Active, suspended, or trial
+
+### User
+
+Users belong to a workspace and have role-based permissions.
+
+```typescript
+// lib/db/schema.ts:52
+export const user = pgTable("user", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  email: text("email").notNull().unique(),
+  emailVerified: boolean("email_verified").notNull().default(false),
+  image: text("image"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+
+  // Workspace relation
+  workspaceId: text("workspace_id").references(() => workspace.id, {
+    onDelete: "cascade",
+  }),
+  role: text("role").notNull().default("member"), // "owner" | "admin" | "member"
+
+  // System admin flag (for super admin access across all workspaces)
+  isSystemAdmin: boolean("is_system_admin").notNull().default(false),
+
+  // Better-auth admin plugin fields
+  banned: boolean("banned").notNull().default(false),
+  banReason: text("ban_reason"),
+  banExpires: timestamp("ban_expires"),
+});
+```
+
+**Roles:**
+- **owner** - Full workspace control, billing access
+- **admin** - Manage users and projects
+- **member** - Create and manage own projects
+- **isSystemAdmin** - Super admin flag for platform admins
+
+**Automatic Workspace Creation:**
+
+When a user signs up, a workspace is automatically created:
+
+```typescript
+// lib/auth.ts:117
+databaseHooks: {
+  user: {
+    create: {
+      after: async (createdUser) => {
+        const workspaceId = nanoid();
+        
+        await db.insert(workspace).values({
+          id: workspaceId,
+          name: `${createdUser.name}'s Workspace`,
+          slug: `${email.split('@')[0]}-${workspaceId.slice(0, 6)}`,
+        });
+        
+        await db.update(user)
+          .set({ workspaceId, role: "owner" })
+          .where(eq(user.id, createdUser.id));
+      },
+    },
+  },
+}
+```
+
+## Authentication Tables (Better Auth)
+
+### Session
+
+```typescript
+// lib/db/schema.ts:76
+export const session = pgTable("session", {
+  id: text("id").primaryKey(),
+  expiresAt: timestamp("expires_at").notNull(),
+  token: text("token").notNull().unique(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  ipAddress: text("ip_address"),
+  userAgent: text("user_agent"),
+  userId: text("user_id")
+    .notNull()
+    .references(() => user.id, { onDelete: "cascade" }),
+  
+  // Admin impersonation tracking (better-auth admin plugin)
+  impersonatedBy: text("impersonated_by").references(() => user.id, {
+    onDelete: "set null",
+  }),
+});
+```
+
+**Features:**
+- 7-day session expiration (configurable in `lib/auth.ts:107`)
+- IP address and user agent tracking
+- Admin impersonation support for customer support
+
+### Account
+
+Stores OAuth provider data and password hashes.
+
+```typescript
+// lib/db/schema.ts:98
+export const account = pgTable("account", {
+  id: text("id").primaryKey(),
+  accountId: text("account_id").notNull(),
+  providerId: text("provider_id").notNull(), // "credential" for email/password
+  userId: text("user_id")
+    .notNull()
+    .references(() => user.id, { onDelete: "cascade" }),
+  accessToken: text("access_token"),
+  refreshToken: text("refresh_token"),
+  idToken: text("id_token"),
+  accessTokenExpiresAt: timestamp("access_token_expires_at"),
+  refreshTokenExpiresAt: timestamp("refresh_token_expires_at"),
+  scope: text("scope"),
+  password: text("password"), // Bcrypt hash for email/password auth
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+```
+
+### Verification
+
+Email verification and password reset tokens.
+
+```typescript
+// lib/db/schema.ts:119
+export const verification = pgTable("verification", {
+  id: text("id").primaryKey(),
+  identifier: text("identifier").notNull(), // Email address
+  value: text("value").notNull(), // Token
+  expiresAt: timestamp("expires_at").notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+```
+
+### Invitation
+
+Workspace member invitations.
+
+```typescript
+// lib/db/schema.ts:136
+export const invitation = pgTable("invitation", {
+  id: text("id").primaryKey(),
+  email: text("email").notNull(),
+  workspaceId: text("workspace_id")
+    .notNull()
+    .references(() => workspace.id, { onDelete: "cascade" }),
+  role: text("role").notNull().default("owner"), // "owner" | "admin" | "member"
+  token: text("token").notNull().unique(),
+  expiresAt: timestamp("expires_at").notNull(),
+  acceptedAt: timestamp("accepted_at"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+```
+
+## Image Project Tables
+
+### Project
+
+Groups multiple image generations together.
+
+```typescript
+// lib/db/schema.ts:164
+export const project = pgTable("project", {
+  id: text("id").primaryKey(),
+  workspaceId: text("workspace_id")
+    .notNull()
+    .references(() => workspace.id, { onDelete: "cascade" }),
+  userId: text("user_id")
+    .notNull()
+    .references(() => user.id, { onDelete: "cascade" }),
+
+  // Project details
+  name: text("name").notNull(),
+  styleTemplateId: text("style_template_id").notNull(),
+  roomType: text("room_type"), // living-room | bedroom | kitchen | etc.
+  thumbnailUrl: text("thumbnail_url"),
+
+  // Status tracking
+  status: text("status").notNull().default("pending"), // pending | processing | completed | failed
+
+  // Image counts (denormalized for performance)
+  imageCount: integer("image_count").notNull().default(0),
+  completedCount: integer("completed_count").notNull().default(0),
+
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+```
+
+**Indexes** (for performance):
+```typescript
+(table) => [
+  index("project_workspace_idx").on(table.workspaceId),
+  index("project_user_idx").on(table.userId),
+  index("project_status_idx").on(table.status),
+]
+```
+
+### ImageGeneration
+
+Individual image processing records.
+
+```typescript
+// lib/db/schema.ts:202
+export const imageGeneration = pgTable("image_generation", {
+  id: text("id").primaryKey(),
+  workspaceId: text("workspace_id")
+    .notNull()
+    .references(() => workspace.id, { onDelete: "cascade" }),
+  userId: text("user_id")
+    .notNull()
+    .references(() => user.id, { onDelete: "cascade" }),
+  projectId: text("project_id")
+    .notNull()
+    .references(() => project.id, { onDelete: "cascade" }),
+
+  // Image data
+  originalImageUrl: text("original_image_url").notNull(),
+  resultImageUrl: text("result_image_url"),
+  prompt: text("prompt").notNull(),
+
+  // Version tracking for edit history
+  version: integer("version").notNull().default(1), // v1, v2, v3...
+  parentId: text("parent_id"), // Links to original image for version chain
+
+  // Status tracking
+  status: text("status").notNull().default("pending"), // pending | processing | completed | failed
+  errorMessage: text("error_message"),
+
+  // Metadata (model used, tokens, cost, etc.)
+  metadata: jsonb("metadata"),
+
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+```
+
+**Version Tracking:**
+
+Images can be edited multiple times, creating a version history:
+
+```typescript
+// Original image
+const original = { id: "img_1", version: 1, parentId: null };
+
+// First edit
+const edit1 = { id: "img_2", version: 2, parentId: "img_1" };
+
+// Second edit
+const edit2 = { id: "img_3", version: 3, parentId: "img_1" };
+```
+
+## Video Project Tables
+
+### VideoProject
+
+Container for video generation workflows.
+
+```typescript
+// lib/db/schema.ts:247
+export const videoProject = pgTable("video_project", {
+  id: text("id").primaryKey(),
+  workspaceId: text("workspace_id")
+    .notNull()
+    .references(() => workspace.id, { onDelete: "cascade" }),
+  userId: text("user_id")
+    .notNull()
+    .references(() => user.id, { onDelete: "cascade" }),
+
+  // Video details
+  name: text("name").notNull(),
+  description: text("description"),
+
+  // Settings
+  aspectRatio: text("aspect_ratio").notNull().default("16:9"), // "16:9" | "9:16" | "1:1"
+  musicTrackId: text("music_track_id"), // FK to music_track or null
+  musicVolume: integer("music_volume").notNull().default(50), // 0-100
+  generateNativeAudio: boolean("generate_native_audio").notNull().default(true),
+
+  // Output
+  finalVideoUrl: text("final_video_url"),
+  thumbnailUrl: text("thumbnail_url"),
+  durationSeconds: integer("duration_seconds"),
+
+  // Status tracking
+  status: text("status").notNull().default("draft"), // draft | generating | compiling | completed | failed
+
+  // Cost tracking (denormalized for performance)
+  clipCount: integer("clip_count").notNull().default(0),
+  completedClipCount: integer("completed_clip_count").notNull().default(0),
+  estimatedCost: integer("estimated_cost").notNull().default(0), // In cents
+  actualCost: integer("actual_cost"), // In cents
+
+  // Error handling
+  errorMessage: text("error_message"),
+
+  // Trigger.dev integration (for real-time progress)
+  triggerRunId: text("trigger_run_id"),
+  triggerAccessToken: text("trigger_access_token"),
+
+  // Metadata
+  metadata: jsonb("metadata"),
+
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+```
+
+### VideoClip
+
+Individual 5-second clips that make up a video.
+
+```typescript
+// lib/db/schema.ts:308
+export const videoClip = pgTable("video_clip", {
+  id: text("id").primaryKey(),
+  videoProjectId: text("video_project_id")
+    .notNull()
+    .references(() => videoProject.id, { onDelete: "cascade" }),
+
+  // Source image (can be from imageGeneration or external URL)
+  sourceImageUrl: text("source_image_url").notNull(),
+  imageGenerationId: text("image_generation_id").references(
+    () => imageGeneration.id,
+    { onDelete: "set null" }
+  ),
+
+  // End image (optional, falls back to sourceImageUrl if null)
+  endImageUrl: text("end_image_url"),
+  endImageGenerationId: text("end_image_generation_id").references(
+    () => imageGeneration.id,
+    { onDelete: "set null" }
+  ),
+
+  // Room type for sequencing
+  roomType: text("room_type").notNull(),
+  roomLabel: text("room_label"), // Custom label like "Master Bedroom"
+
+  // Sequence order
+  sequenceOrder: integer("sequence_order").notNull(),
+
+  // AI generation settings
+  motionPrompt: text("motion_prompt"), // Motion description for Kling
+
+  // Transition settings
+  transitionType: text("transition_type").notNull().default("seamless"), // "cut" | "seamless"
+  transitionClipUrl: text("transition_clip_url"), // Generated transition video URL
+
+  // Output
+  clipUrl: text("clip_url"), // Kling output URL
+  durationSeconds: integer("duration_seconds").notNull().default(5),
+
+  // Status tracking
+  status: text("status").notNull().default("pending"),
+  errorMessage: text("error_message"),
+
+  // Metadata
+  metadata: jsonb("metadata"),
+
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+```
+
+**Clip Sequencing:**
+
+Clips are ordered by `sequenceOrder` and support two transition types:
+- **cut** - Instant transition
+- **seamless** - AI-generated smooth transition
+
+### MusicTrack
+
+Pre-curated royalty-free music tracks.
+
+```typescript
+// lib/db/schema.ts:372
+export const musicTrack = pgTable("music_track", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  artist: text("artist"),
+
+  // Categorization
+  category: text("category").notNull(), // modern | classical | upbeat | calm | cinematic
+  mood: text("mood"), // energetic | relaxing | professional | warm | elegant
+
+  // File info
+  audioUrl: text("audio_url").notNull(),
+  durationSeconds: integer("duration_seconds").notNull(),
+  bpm: integer("bpm"), // Beats per minute
+
+  // Preview
+  previewUrl: text("preview_url"),
+  waveformUrl: text("waveform_url"),
+
+  // Licensing
+  licenseType: text("license_type").notNull().default("royalty-free"),
+  attribution: text("attribution"),
+
+  isActive: boolean("is_active").notNull().default(true),
+
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+```
+
+## Billing Tables
+
+### WorkspacePricing
+
+Custom pricing overrides per workspace.
+
+```typescript
+// lib/db/schema.ts:489
+export const workspacePricing = pgTable("workspace_pricing", {
+  id: text("id").primaryKey(),
+  workspaceId: text("workspace_id")
+    .notNull()
+    .unique()
+    .references(() => workspace.id, { onDelete: "cascade" }),
+
+  // Custom pricing (null = use defaults: 100000 ore = 1000 NOK)
+  imageProjectPriceOre: integer("image_project_price_ore"), // In ore
+  videoProjectPriceOre: integer("video_project_price_ore"), // In ore
+
+  // Cached Fiken contact ID for faster invoice creation
+  fikenContactId: integer("fiken_contact_id"),
+
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+```
+
+### Invoice
+
+Groups line items for Norwegian B2B invoicing.
+
+```typescript
+// lib/db/schema.ts:514
+export const invoice = pgTable("invoice", {
+  id: text("id").primaryKey(),
+  workspaceId: text("workspace_id")
+    .notNull()
+    .references(() => workspace.id, { onDelete: "cascade" }),
+
+  // Fiken integration
+  fikenInvoiceId: integer("fiken_invoice_id"),
+  fikenInvoiceNumber: text("fiken_invoice_number"),
+  fikenContactId: integer("fiken_contact_id"),
+
+  // Invoice totals
+  totalAmountOre: integer("total_amount_ore").notNull(),
+  currency: text("currency").notNull().default("NOK"),
+
+  // Status: draft | sent | paid | cancelled | overdue
+  status: text("status").notNull().default("draft"),
+
+  // Dates
+  issueDate: timestamp("issue_date"),
+  dueDate: timestamp("due_date"),
+  paidAt: timestamp("paid_at"),
+
+  notes: text("notes"),
+
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+```
+
+### InvoiceLineItem
+
+Billable items (projects/videos).
+
+```typescript
+// lib/db/schema.ts:556
+export const invoiceLineItem = pgTable("invoice_line_item", {
+  id: text("id").primaryKey(),
+  workspaceId: text("workspace_id")
+    .notNull()
+    .references(() => workspace.id, { onDelete: "cascade" }),
+
+  // Reference to billable item (one of these should be set)
+  projectId: text("project_id").references(() => project.id, {
+    onDelete: "set null",
+  }),
+  videoProjectId: text("video_project_id").references(() => videoProject.id, {
+    onDelete: "set null",
+  }),
+
+  // Line item details
+  description: text("description").notNull(),
+  amountOre: integer("amount_ore").notNull(),
+  quantity: integer("quantity").notNull().default(1),
+
+  // Status: pending | invoiced | cancelled
+  status: text("status").notNull().default("pending"),
+
+  // Link to invoice when included
+  invoiceId: text("invoice_id").references(() => invoice.id, {
+    onDelete: "set null",
+  }),
+
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+```
+
+### StripeCustomer & ProjectPayment
+
+Stripe payment integration.
+
+```typescript
+// lib/db/schema.ts:710
+export const stripeCustomer = pgTable("stripe_customer", {
+  id: text("id").primaryKey(),
+  workspaceId: text("workspace_id")
+    .notNull()
+    .unique()
+    .references(() => workspace.id, { onDelete: "cascade" }),
+  stripeCustomerId: text("stripe_customer_id").notNull().unique(), // cus_xxx
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const projectPayment = pgTable("project_payment", {
+  id: text("id").primaryKey(),
+  projectId: text("project_id")
+    .notNull()
+    .unique()
+    .references(() => project.id, { onDelete: "cascade" }),
+  workspaceId: text("workspace_id")
+    .notNull()
+    .references(() => workspace.id, { onDelete: "cascade" }),
+
+  // Payment method: 'stripe' | 'invoice' | 'free'
+  paymentMethod: text("payment_method").notNull(),
+
+  // Stripe fields
+  stripeCheckoutSessionId: text("stripe_checkout_session_id"),
+  stripePaymentIntentId: text("stripe_payment_intent_id"),
+
+  // Invoice fields
+  invoiceLineItemId: text("invoice_line_item_id").references(
+    () => invoiceLineItem.id,
+    { onDelete: "set null" }
+  ),
+
+  // Amounts
+  amountCents: integer("amount_cents").notNull(),
+  currency: text("currency").notNull(), // 'usd' | 'nok'
+
+  // Status: 'pending' | 'completed' | 'failed' | 'refunded'
+  status: text("status").notNull().default("pending"),
+
+  paidAt: timestamp("paid_at"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+```
+
+## Affiliate Tables
+
+### AffiliateRelationship
+
+Links affiliate workspace to referred workspace.
+
+```typescript
+// lib/db/schema.ts:605
+export const affiliateRelationship = pgTable("affiliate_relationship", {
+  id: text("id").primaryKey(),
+
+  // The affiliate (earns commission)
+  affiliateWorkspaceId: text("affiliate_workspace_id")
+    .notNull()
+    .references(() => workspace.id, { onDelete: "cascade" }),
+
+  // The referred workspace (generates revenue for affiliate)
+  referredWorkspaceId: text("referred_workspace_id")
+    .notNull()
+    .references(() => workspace.id, { onDelete: "cascade" }),
+
+  // Commission percentage (e.g., 20 = 20%, 50 = 50%)
+  commissionPercent: integer("commission_percent").notNull().default(20),
+
+  // Active status
+  isActive: boolean("is_active").notNull().default(true),
+
+  notes: text("notes"),
+
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+```
+
+### AffiliateEarning
+
+Commission earned when referred workspace invoice is paid.
+
+```typescript
+// lib/db/schema.ts:643
+export const affiliateEarning = pgTable("affiliate_earning", {
+  id: text("id").primaryKey(),
+
+  affiliateWorkspaceId: text("affiliate_workspace_id")
+    .notNull()
+    .references(() => workspace.id, { onDelete: "cascade" }),
+
+  affiliateRelationshipId: text("affiliate_relationship_id")
+    .notNull()
+    .references(() => affiliateRelationship.id, { onDelete: "cascade" }),
+
+  invoiceId: text("invoice_id")
+    .notNull()
+    .references(() => invoice.id, { onDelete: "cascade" }),
+
+  // Earning details
+  invoiceAmountOre: integer("invoice_amount_ore").notNull(),
+  commissionPercent: integer("commission_percent").notNull(),
+  earningAmountOre: integer("earning_amount_ore").notNull(),
+
+  // Payout status: pending | paid_out
+  status: text("status").notNull().default("pending"),
+  paidOutAt: timestamp("paid_out_at"),
+  paidOutReference: text("paid_out_reference"),
+
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+```
+
+## Type Exports
+
+Drizzle ORM provides automatic type inference:
+
+```typescript
+// lib/db/schema.ts:407
+export type Workspace = typeof workspace.$inferSelect;
+export type NewWorkspace = typeof workspace.$inferInsert;
+
+export type User = typeof user.$inferSelect;
+export type NewUser = typeof user.$inferInsert;
+
+export type Project = typeof project.$inferSelect;
+export type NewProject = typeof project.$inferInsert;
+
+export type ImageGeneration = typeof imageGeneration.$inferSelect;
+export type NewImageGeneration = typeof imageGeneration.$inferInsert;
+
+export type VideoProject = typeof videoProject.$inferSelect;
+export type NewVideoProject = typeof videoProject.$inferInsert;
+
+// etc...
+```
+
+**Usage:**
+
+```typescript
+import { type Project, type NewProject } from "@/lib/db/schema";
+
+// Type-safe insert
+const newProject: NewProject = {
+  workspaceId: "ws_123",
+  userId: "user_456",
+  name: "My Project",
+  styleTemplateId: "modern",
+};
+
+// Type-safe select
+const project: Project = await db.query.project.findFirst({
+  where: eq(project.id, projectId),
+});
+```
+
+## Database Queries
+
+Common queries are abstracted in `lib/db/queries.ts`:
+
+```typescript
+// Example query pattern
+export async function getProjectById(projectId: string) {
+  return await db.query.project.findFirst({
+    where: eq(project.id, projectId),
+    with: {
+      images: {
+        orderBy: desc(imageGeneration.createdAt),
+      },
+    },
+  });
+}
+```
+
+## Migrations
+
+Drizzle Kit manages database migrations:
+
+```bash
+# Generate migration files
+pnpm db:generate
+
+# Push schema to database (development)
+pnpm db:push
+
+# Run migrations (production)
+pnpm db:migrate
+```
+
+Migrations are stored in `drizzle/` directory.
+
+## Room Types
+
+Comprehensive room type enum:
+
+```typescript
+// lib/db/schema.ts:435
+export type RoomType =
+  | "living-room"
+  | "kitchen"
+  | "bedroom"
+  | "bathroom"
+  | "toilet"
+  | "hallway"
+  | "office"
+  | "laundry-room"
+  | "storage-room"
+  | "walk-in-closet"
+  | "sauna"
+  | "gym"
+  | "childrens-room"
+  | "pool-area"
+  | "dining-room"
+  | "tv-room"
+  | "library"
+  | "hobby-room"
+  | "utility-room"
+  | "pantry"
+  | "conservatory"
+  | "garage"
+  | "terrace"
+  | "garden"
+  | "landscape"
+  | "exterior"
+  | "other";
+```
+
+See [Background Jobs](/development/background-jobs) for how this schema is used in workflows.

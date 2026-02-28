@@ -1,0 +1,708 @@
+---
+title: 'Video Creation'
+description: 'Generate AI-powered property tour videos with smooth transitions and background music'
+icon: 'video'
+---
+
+## Overview
+
+AI Studio's video creation feature transforms static property photos into dynamic walkthrough videos. Using AI-powered motion generation and intelligent transitions, you can create professional property tours in minutes.
+
+## Video Creation Workflow
+
+The video wizard guides you through a step-by-step process:
+
+<Steps>
+  <Step title="Choose Creation Mode">
+    Select how you want to build your video:
+    
+    <CardGroup cols={2}>
+      <Card title="Template Mode" icon="template">
+        Start with a pre-configured storyboard template:
+        - Predefined room sequence
+        - Professional shot ordering
+        - Optimal transition timing
+      </Card>
+      
+      <Card title="Custom Mode" icon="wand-magic-sparkles">
+        Build from scratch:
+        - Select your own images
+        - Assign room types manually
+        - Full control over sequence
+      </Card>
+    </CardGroup>
+    
+    ```typescript
+    // Source: components/video/video-creation/video-creation-wizard.tsx
+    const TEMPLATE_STEPS = [
+      "select-template",
+      "storyboard",
+      "select-music",
+      "review"
+    ];
+    
+    const CUSTOM_STEPS = [
+      "select-template",
+      "select-images",
+      "assign-rooms",
+      "select-music",
+      "review"
+    ];
+    ```
+  </Step>
+  
+  <Step title="Select Images">
+    Choose images from your completed photo editing projects or upload new ones.
+    
+    **Image Requirements:**
+    - Minimum 3 images
+    - Maximum 12 images per video
+    - All images must be from the same workspace
+    - Can mix enhanced and original images
+    
+    ```typescript
+    // Source: lib/db/schema.ts
+    export const videoClip = pgTable("video_clip", {
+      id: text("id").primaryKey(),
+      sourceImageUrl: text("source_image_url").notNull(),
+      imageGenerationId: text("image_generation_id"), // Link to edited photo
+      endImageUrl: text("end_image_url"), // Optional end frame for smooth transitions
+      roomType: text("room_type").notNull(),
+      sequenceOrder: integer("sequence_order").notNull(),
+    });
+    ```
+  </Step>
+  
+  <Step title="Assign Room Types & Sequence">
+    Label each image and arrange them in the desired order:
+    
+    <Tabs>
+      <Tab title="Room Assignment">
+        Each image needs a room type for proper sequencing:
+        
+        - Living Room
+        - Kitchen
+        - Bedroom
+        - Bathroom
+        - Exterior
+        - Garden
+        - And more...
+        
+        Room types help the AI understand context for motion generation.
+      </Tab>
+      
+      <Tab title="Auto-Arrange">
+        Click **Auto-Arrange** to sort images by room type following real estate best practices:
+        
+        1. Exterior / Garden (curb appeal first)
+        2. Living Room (main living space)
+        3. Kitchen
+        4. Dining Room
+        5. Bedrooms
+        6. Bathrooms
+        
+        ```typescript
+        // Auto-arrange by room type
+        onAutoArrange={creation.autoArrangeByRoomType}
+        ```
+      </Tab>
+      
+      <Tab title="Manual Reorder">
+        Drag and drop images to customize the sequence:
+        
+        ```tsx
+        // Source: components/video/video-creation/steps/assign-rooms-step.tsx
+        onReorderImages={creation.reorderImages}
+        ```
+      </Tab>
+    </Tabs>
+  </Step>
+  
+  <Step title="Configure Music & Settings">
+    Customize your video's audio and format:
+    
+    <Tabs>
+      <Tab title="Music Library">
+        Choose from royalty-free music tracks:
+        
+        ```typescript
+        // Source: lib/db/schema.ts
+        export const musicTrack = pgTable("music_track", {
+          id: text("id").primaryKey(),
+          name: text("name").notNull(),
+          artist: text("artist"),
+          category: text("category").notNull(), // modern | classical | upbeat | calm
+          audioUrl: text("audio_url").notNull(),
+          durationSeconds: integer("duration_seconds").notNull(),
+          bpm: integer("bpm"), // For tempo matching
+        });
+        ```
+        
+        Categories:
+        - **Modern**: Contemporary electronic and pop
+        - **Classical**: Orchestral and piano
+        - **Upbeat**: Energetic and lively
+        - **Calm**: Relaxing and ambient
+        - **Cinematic**: Epic and dramatic
+      </Tab>
+      
+      <Tab title="Aspect Ratio">
+        Choose the video format:
+        
+        - **16:9** - Landscape (YouTube, websites)
+        - **9:16** - Portrait (Instagram Stories, TikTok)
+        - **1:1** - Square (Instagram Feed, Facebook)
+        
+        ```typescript
+        export type VideoAspectRatio = "16:9" | "9:16" | "1:1";
+        ```
+      </Tab>
+      
+      <Tab title="Audio Settings">
+        - **Music Volume**: 0-100% (default: 50%)
+        - **Native Audio**: Generate ambient sounds (footsteps, atmosphere)
+        
+        ```typescript
+        // Source: lib/db/schema.ts
+        generateNativeAudio: boolean("generate_native_audio")
+          .notNull()
+          .default(true),
+        musicVolume: integer("music_volume").notNull().default(50),
+        ```
+      </Tab>
+    </Tabs>
+  </Step>
+  
+  <Step title="Review & Generate">
+    Final review before generation:
+    
+    - Project name
+    - Image count and sequence
+    - Music selection
+    - Estimated cost
+    - Total duration (~5 seconds per clip)
+    
+    Click **Generate Video** to start the AI video generation process.
+  </Step>
+</Steps>
+
+## AI Video Generation Pipeline
+
+When you generate a video, AI Studio orchestrates a complex multi-stage pipeline:
+
+### Pipeline Architecture
+
+```typescript
+// Source: trigger/video-orchestrator.ts
+export const generateVideoTask = task({
+  id: "generate-video",
+  queue: {
+    name: "video-generation",
+    concurrencyLimit: 1, // Process one video at a time
+  },
+  maxDuration: 1800, // 30 minutes total
+});
+```
+
+### Stage 1: Clip Generation
+
+<Tabs>
+  <Tab title="Parallel Processing">
+    All clips are generated in parallel for speed:
+    
+    ```typescript
+    // Source: trigger/video-orchestrator.ts
+    const clipResults = await generateVideoClipTask.batchTriggerAndWait(
+      clips.map((clip) => ({
+        payload: {
+          clipId: clip.id,
+          tailImageUrl: clip.endImageUrl || clip.sourceImageUrl,
+          targetRoomLabel: clip.roomLabel || clip.roomType,
+        },
+      }))
+    );
+    ```
+    
+    Each clip is processed independently:
+    - Image-to-video AI generation
+    - Motion synthesis
+    - 5-second duration per clip
+  </Tab>
+  
+  <Tab title="Motion Generation">
+    The AI model generates realistic camera motion:
+    
+    ```typescript
+    // AI model processes each image
+    const result = await kling.generateVideo({
+      image: clip.sourceImageUrl,
+      prompt: generateMotionPrompt(clip.roomType),
+      duration: 5, // seconds
+      aspectRatio: videoProject.aspectRatio,
+    });
+    ```
+    
+    Motion characteristics:
+    - Slow, smooth camera movements
+    - Room-appropriate motion (e.g., forward in hallways, pan in living rooms)
+    - Natural parallax effects
+  </Tab>
+  
+  <Tab title="Progress Tracking">
+    Real-time progress updates:
+    
+    ```typescript
+    metadata.set("status", {
+      step: "generating",
+      label: `Generating ${clips.length} clips…`,
+      clipIndex: 0,
+      totalClips: clips.length,
+      progress: 10,
+    });
+    ```
+    
+    The UI displays:
+    - Current clip being processed
+    - Percentage complete
+    - Estimated time remaining
+  </Tab>
+</Tabs>
+
+### Stage 2: Transition Generation
+
+<Note>
+Seamless transitions create smooth morph effects between clips.
+</Note>
+
+```typescript
+// Source: trigger/video-orchestrator.ts
+const clipsWithTransitions = clips.filter((clip, index) => {
+  return clip.transitionType === "seamless" && index < clips.length - 1;
+});
+
+if (clipsWithTransitions.length > 0) {
+  const transitionResults = await generateTransitionClipTask.batchTriggerAndWait(
+    clipsWithTransitions.map((clip) => {
+      const nextClip = clips[clipIndex + 1];
+      return {
+        payload: {
+          clipId: clip.id,
+          fromImageUrl: clip.endImageUrl || clip.sourceImageUrl,
+          toImageUrl: nextClip.sourceImageUrl,
+          aspectRatio: videoProject.aspectRatio,
+        },
+      };
+    })
+  );
+}
+```
+
+**Transition Types:**
+
+<CardGroup cols={2}>
+  <Card title="Seamless" icon="wand-magic-sparkles">
+    AI-generated morph between clips:
+    - Smooth visual blending
+    - 1-2 second duration
+    - Natural scene transitions
+  </Card>
+  
+  <Card title="Cut" icon="scissors">
+    Direct cut between clips:
+    - Instant transition
+    - No processing overhead
+    - Traditional editing style
+  </Card>
+</CardGroup>
+
+### Stage 3: Video Compilation
+
+Once all clips and transitions are ready, the final video is compiled:
+
+```typescript
+// Source: trigger/compile-video.ts
+metadata.set("status", {
+  step: "compiling",
+  label: "Compiling video…",
+  progress: 70,
+});
+
+// Trigger and wait for compilation
+const compileResult = await compileVideoTask.triggerAndWait({
+  videoProjectId,
+});
+```
+
+**Compilation Process:**
+
+1. **Sequence Assembly**: Clips ordered by `sequenceOrder`
+2. **Transition Insertion**: Seamless clips inserted between main clips
+3. **Audio Mixing**: Background music + native audio (if enabled)
+4. **Format Export**: Final render in selected aspect ratio
+5. **Thumbnail Generation**: Extract frame for video preview
+
+```typescript
+// Source: lib/db/schema.ts
+export const videoProject = pgTable("video_project", {
+  id: text("id").primaryKey(),
+  finalVideoUrl: text("final_video_url"),
+  thumbnailUrl: text("thumbnail_url"),
+  durationSeconds: integer("duration_seconds"),
+  status: text("status").notNull().default("draft"),
+});
+```
+
+## Video Project Status Flow
+
+Video projects progress through distinct stages:
+
+```typescript
+export type VideoProjectStatus =
+  | "draft"      // Initial creation, not yet started
+  | "generating" // AI clip generation in progress
+  | "compiling"  // Assembling final video
+  | "completed"  // Ready to view/download
+  | "failed";    // Generation failed
+```
+
+<Steps>
+  <Step title="Draft">
+    Video project created but generation not started.
+    
+    **Actions:**
+    - Edit settings
+    - Modify clip sequence
+    - Start generation
+  </Step>
+  
+  <Step title="Generating">
+    AI is creating motion clips for each image.
+    
+    **Progress Indicators:**
+    ```typescript
+    // Source: lib/db/schema.ts
+    clipCount: integer("clip_count").notNull().default(0),
+    completedClipCount: integer("completed_clip_count").notNull().default(0),
+    ```
+    
+    Typical duration: 3-8 minutes depending on clip count.
+  </Step>
+  
+  <Step title="Compiling">
+    Clips are being assembled into final video.
+    
+    **Activities:**
+    - Stitching clips together
+    - Adding transitions
+    - Mixing audio tracks
+    - Encoding final output
+    
+    Duration: 1-3 minutes.
+  </Step>
+  
+  <Step title="Completed">
+    Video is ready!
+    
+    **Available Actions:**
+    - Preview video
+    - Download (MP4)
+    - Share link
+    - View analytics
+  </Step>
+  
+  <Step title="Failed">
+    Something went wrong during generation.
+    
+    **Error Handling:**
+    ```typescript
+    errorMessage: text("error_message"),
+    ```
+    
+    Check error message and contact support if needed.
+  </Step>
+</Steps>
+
+## Cost Estimation
+
+Video generation costs are calculated based on:
+
+```typescript
+// Source: lib/video/video-constants.ts
+export function calculateVideoCost(
+  clipCount: number,
+  clipDuration: number,
+  generateNativeAudio: boolean
+): number {
+  const baseClipCost = 0.35; // $0.35 per 5-second clip
+  const nativeAudioCost = generateNativeAudio ? 0.10 : 0;
+  
+  return (baseClipCost + nativeAudioCost) * clipCount;
+}
+```
+
+**Example Costs:**
+- 5 clips (25s video): $1.75 - $2.25
+- 8 clips (40s video): $2.80 - $3.60
+- 12 clips (60s video): $4.20 - $5.40
+
+<Info>
+Costs are estimated during the review step and finalized after successful generation.
+</Info>
+
+## Real-Time Progress Updates
+
+The video detail page shows live progress using Trigger.dev's real-time capabilities:
+
+```tsx
+// Source: components/video/video-detail-content.tsx
+const { run } = useRealtimeRun(videoProject.triggerRunId, {
+  accessToken: videoProject.triggerAccessToken,
+  enabled: !!videoProject.triggerRunId,
+});
+
+const status = run?.metadata?.status as GenerateVideoStatus;
+
+// Display progress
+<div>
+  <p>{status.label}</p>
+  {status.clipIndex && (
+    <p>Clip {status.clipIndex + 1} of {status.totalClips}</p>
+  )}
+  <ProgressBar value={status.progress} />
+</div>
+```
+
+**Progress Data:**
+```typescript
+export interface GenerateVideoStatus {
+  step: "starting" | "generating" | "compiling" | "completed" | "failed";
+  label: string;
+  clipIndex?: number;
+  totalClips?: number;
+  progress?: number;
+}
+```
+
+## Viewing & Downloading
+
+### Video Player
+
+Once completed, videos can be played directly in the browser:
+
+```tsx
+<video
+  controls
+  className="aspect-video w-full rounded-lg"
+  src={videoProject.finalVideoUrl}
+  poster={videoProject.thumbnailUrl}
+>
+  Your browser does not support video playback.
+</video>
+```
+
+**Player Features:**
+- Play/pause controls
+- Volume adjustment
+- Fullscreen mode
+- Seek bar
+- Thumbnail preview
+
+### Download Options
+
+<Tabs>
+  <Tab title="Direct Download">
+    Click the **Download** button to save the MP4 file:
+    
+    ```typescript
+    const downloadVideo = async () => {
+      const response = await fetch(videoProject.finalVideoUrl);
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${videoProject.name}.mp4`;
+      a.click();
+    };
+    ```
+  </Tab>
+  
+  <Tab title="Share Link">
+    Get a shareable link to the video:
+    
+    ```typescript
+    const shareUrl = `${baseUrl}/video/${videoProject.id}/share`;
+    ```
+    
+    Share links:
+    - Public access (no login required)
+    - Workspace-level privacy
+    - Expiration optional
+  </Tab>
+</Tabs>
+
+## Advanced Features
+
+### Custom Motion Prompts
+
+<Accordion title="Override Default Motion">
+For advanced users, you can customize the motion prompt for specific clips:
+
+```typescript
+// Source: lib/db/schema.ts
+motionPrompt: text("motion_prompt"), // Custom motion description
+```
+
+Example prompts:
+- "Slow zoom into the center of the room"
+- "Pan left to right showing the kitchen layout"
+- "Forward dolly movement through the hallway"
+- "Gentle tilt up to reveal the ceiling details"
+</Accordion>
+
+### Multi-Image Transitions
+
+<Accordion title="Start & End Frames">
+Create dynamic transitions by specifying different start and end images:
+
+```typescript
+// Source: lib/db/schema.ts
+sourceImageUrl: text("source_image_url").notNull(), // Starting frame
+endImageUrl: text("end_image_url"), // Ending frame (optional)
+```
+
+Use cases:
+- Before/after transformations
+- Room transitions (day to night)
+- Seasonal changes (summer to winter exterior)
+</Accordion>
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Image Selection">
+    Choose images strategically:
+    
+    - **Variety**: Mix wide shots with detail shots
+    - **Lighting**: Consistent lighting across all images
+    - **Quality**: High-resolution images (minimum 1920x1080)
+    - **Composition**: Follow rule of thirds for visual interest
+    - **Story Flow**: Logical progression through the property
+  </Accordion>
+  
+  <Accordion title="Sequence Planning">
+    Order clips to tell a compelling story:
+    
+    1. **Hook**: Start with the most impressive shot (exterior or best room)
+    2. **Flow**: Move logically through spaces (don't jump randomly)
+    3. **Pace**: Mix room types to maintain interest
+    4. **Climax**: Save a stunning view or unique feature for near the end
+    5. **Close**: End with exterior or aerial shot
+  </Accordion>
+  
+  <Accordion title="Music Selection">
+    Match music to property type:
+    
+    - **Luxury Properties**: Cinematic or classical
+    - **Modern Apartments**: Upbeat or modern
+    - **Family Homes**: Calm or warm tones
+    - **Commercial**: Professional and energetic
+    
+    Volume guidelines:
+    - 40-50%: Background ambiance
+    - 60-70%: Prominent soundtrack
+    - 30-40%: When using native audio
+  </Accordion>
+  
+  <Accordion title="Transition Strategy">
+    **Use Seamless Transitions:**
+    - Between similar room types
+    - For smooth storytelling
+    - When showing progression
+    
+    **Use Cut Transitions:**
+    - Between very different spaces
+    - For faster pacing
+    - To reduce processing time
+  </Accordion>
+</AccordionGroup>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Video stuck in generating">
+    If generation exceeds expected time:
+    
+    1. **Check Progress**: Look at clip completion count
+    2. **Wait for Timeout**: System will auto-retry failed clips
+    3. **Partial Success**: If some clips complete, you can still get a video
+    
+    ```typescript
+    // Source: trigger/video-orchestrator.ts
+    // If some clips failed, log warning but continue
+    if (failedClips.length > 0) {
+      logger.warn("Some clips failed to generate", {
+        failedCount: failedClips.length,
+      });
+    }
+    ```
+  </Accordion>
+  
+  <Accordion title="Poor motion quality">
+    If clip motion looks unnatural:
+    
+    - **Image Quality**: Ensure source images are high resolution
+    - **Motion Prompt**: Try custom motion prompts for better control
+    - **Room Type**: Verify correct room types are assigned
+    - **Retry**: Delete and regenerate the specific clip
+  </Accordion>
+  
+  <Accordion title="Audio sync issues">
+    If music doesn't sync properly:
+    
+    - Music is looped to match video duration automatically
+    - Check music volume settings (may be too low)
+    - Disable native audio if it conflicts
+    - Try a different music track
+  </Accordion>
+</AccordionGroup>
+
+## Technical Specifications
+
+<Tabs>
+  <Tab title="Video Format">
+    **Output Specifications:**
+    - Format: MP4 (H.264)
+    - Frame Rate: 30 fps
+    - Bitrate: 5-8 Mbps
+    - Audio: AAC, 192 kbps
+    
+    **Aspect Ratios:**
+    - 16:9: 1920x1080
+    - 9:16: 1080x1920
+    - 1:1: 1080x1080
+  </Tab>
+  
+  <Tab title="Processing Limits">
+    **Constraints:**
+    - Minimum clips: 3
+    - Maximum clips: 12
+    - Clip duration: 5 seconds (fixed)
+    - Maximum video length: 60 seconds
+    - Queue limit: 1 concurrent video
+    
+    ```typescript
+    queue: {
+      name: "video-generation",
+      concurrencyLimit: 1,
+    },
+    ```
+  </Tab>
+  
+  <Tab title="Storage">
+    **File Storage:**
+    - Individual clips: Temporary (deleted after compilation)
+    - Final video: Permanent (Supabase Storage)
+    - Retention: Unlimited
+    - Workspace isolation: All files scoped to workspace ID
+  </Tab>
+</Tabs>

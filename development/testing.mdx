@@ -1,0 +1,405 @@
+---
+title: Testing Guide
+description: Testing approach and manual verification steps for AI Studio
+---
+
+## Overview
+
+AI Studio currently does not have a dedicated test runner configured. Testing is performed through manual verification, linting, and TypeScript type checking.
+
+<Note>
+This is an evolving area. Contributions to add automated testing are welcome! See the [Contributing Guide](/development/contributing) for how to propose improvements.
+</Note>
+
+## Quality Assurance Tools
+
+### ESLint
+
+The project uses Next.js ESLint configuration for code quality:
+
+```bash
+pnpm lint
+```
+
+Configuration in `eslint.config.mjs`:
+
+```javascript
+import { defineConfig, globalIgnores } from "eslint/config";
+import nextVitals from "eslint-config-next/core-web-vitals";
+import nextTs from "eslint-config-next/typescript";
+
+const eslintConfig = defineConfig([
+  ...nextVitals,
+  ...nextTs,
+  globalIgnores([
+    ".next/**",
+    "out/**",
+    "build/**",
+    "next-env.d.ts",
+  ]),
+]);
+```
+
+**What ESLint Checks:**
+- React Hooks rules
+- Next.js best practices
+- TypeScript type usage
+- Accessibility guidelines
+- Import/export patterns
+
+<Tip>
+Run `pnpm lint` before committing changes. Most editors support ESLint auto-fix on save.
+</Tip>
+
+### TypeScript Type Checking
+
+The project is fully typed with TypeScript 5:
+
+```bash
+pnpm build
+```
+
+The build process runs type checking. However, `next.config.ts` currently has:
+
+```typescript
+typescript: { ignoreBuildErrors: true }
+```
+
+<Warning>
+For production deployments, consider setting `ignoreBuildErrors: false` to catch type errors during build.
+</Warning>
+
+### Biome (Code Formatter)
+
+The project includes Biome for fast linting and formatting:
+
+```bash
+# Configuration in biome.jsonc
+```
+
+Biome is configured but not actively used in the npm scripts. Consider integrating it into your workflow.
+
+## Manual Testing Guidelines
+
+### Testing Workflow
+
+When making changes, follow this verification process:
+
+1. **Run ESLint**: `pnpm lint`
+2. **Build locally**: `pnpm build`
+3. **Test locally**: `pnpm dev` + manual verification
+4. **Test with Trigger.dev**: `pnpm trigger` (in separate terminal)
+5. **Document verification steps**: Include in PR description
+
+### Critical Paths to Test
+
+#### Authentication Flow
+
+```bash
+# Start dev server
+pnpm dev
+```
+
+**Manual Steps:**
+1. Visit `http://localhost:3000`
+2. Click "Sign Up" and create account
+3. Verify email sending (check Resend dashboard)
+4. Sign in with credentials
+5. Test sign out
+6. Test password reset flow
+
+**Files involved:**
+- `lib/auth.ts` - Better Auth configuration
+- `app/api/auth/[...all]/route.ts` - Auth endpoints
+
+#### Project Creation & Management
+
+```bash
+# Ensure database is running
+pnpm db:push
+pnpm dev
+```
+
+**Manual Steps:**
+1. Navigate to `/dashboard`
+2. Click "New Project"
+3. Upload property images
+4. Select style template
+5. Verify project appears in dashboard grid
+6. Test table view toggle
+7. Open project details page
+
+**Files to verify:**
+- `app/dashboard/page.tsx` - Dashboard grid/table view
+- `app/dashboard/[id]/page.tsx` - Project detail page
+- `components/projects/*` - Project creation workflow
+
+#### AI Image Processing
+
+```bash
+# Start both servers
+pnpm dev
+pnpm trigger  # In separate terminal
+```
+
+**Manual Steps:**
+1. Create project with images
+2. Apply AI style template
+3. Monitor Trigger.dev dashboard for job status
+4. Verify processed image appears
+5. Download result
+6. Check Supabase storage for uploaded files
+
+**Files to verify:**
+- `trigger/process-image.ts` - Image processing job
+- `app/api/edit-photo/route.ts` - API endpoint
+- `lib/style-templates.ts` - Style template definitions
+
+#### Video Generation
+
+**Manual Steps:**
+1. Create video project
+2. Upload multiple property images
+3. Configure transitions and music
+4. Trigger video generation
+5. Monitor Trigger.dev for:
+   - `video-orchestrator.ts` - Main workflow
+   - `generate-video-clip.ts` - Individual clips
+   - `generate-transition-clip.ts` - Transitions
+   - `compile-video.ts` - Final assembly
+6. Verify final video download
+
+**Files to verify:**
+- `trigger/video-orchestrator.ts`
+- `trigger/generate-video-clip.ts`
+- `trigger/generate-transition-clip.ts`
+- `trigger/compile-video.ts`
+
+#### Team Workspaces
+
+**Manual Steps:**
+1. Create workspace in `/dashboard/settings/team`
+2. Invite team member via email
+3. Accept invitation (use different browser/incognito)
+4. Verify role-based permissions:
+   - Owner: Full access
+   - Admin: Manage members
+   - Member: View only
+5. Test workspace switching
+
+**Files to verify:**
+- `app/dashboard/settings/team/page.tsx`
+- `components/settings/team-settings.tsx`
+
+#### Admin Panel
+
+**Manual Steps:**
+1. Sign in as admin user
+2. Navigate to `/admin`
+3. Verify user list loads
+4. Check workspace overview
+5. Test analytics dashboard
+
+**Files to verify:**
+- `app/admin/users/page.tsx`
+- `app/admin/workspaces/page.tsx`
+- `components/admin/*`
+
+### Database Testing
+
+Verify database operations using Drizzle Studio:
+
+```bash
+pnpm db:studio
+```
+
+This opens a web UI at `http://localhost:4983` for:
+- Viewing all tables
+- Inspecting data
+- Running queries
+- Verifying relationships
+
+**Tables to inspect:**
+- `user` - User accounts
+- `workspace` - Team workspaces
+- `project` - Photo/video projects
+- `session` - Auth sessions
+- `account` - OAuth accounts
+
+### Email Testing
+
+Preview email templates locally:
+
+```bash
+pnpm email
+```
+
+This starts React Email preview server. Test:
+- Team invitation emails
+- Welcome emails
+- Password reset emails
+
+**Email templates location:** `emails/`
+
+## Browser Testing
+
+Test in multiple browsers:
+
+- **Chrome/Edge**: Primary target
+- **Firefox**: Verify compatibility
+- **Safari**: Test on macOS/iOS
+- **Mobile browsers**: Responsive design
+
+### Responsive Testing
+
+Verify layouts at:
+- Mobile: 375px (iPhone)
+- Tablet: 768px (iPad)
+- Desktop: 1920px (Full HD)
+
+## Performance Testing
+
+### Build Size
+
+```bash
+pnpm build
+```
+
+Monitor output for:
+- Bundle size warnings
+- Large page sizes
+- Unused dependencies
+
+### Lighthouse
+
+Run Chrome DevTools Lighthouse on:
+- Landing page
+- Dashboard
+- Project detail page
+
+Target scores:
+- Performance: >90
+- Accessibility: >90
+- Best Practices: >90
+- SEO: >90
+
+## Environment Testing
+
+Test in different environments:
+
+### Development
+
+```bash
+pnpm dev
+```
+
+Uses `.env.local` with development API keys.
+
+### Production Build
+
+```bash
+pnpm build
+pnpm start
+```
+
+Simulates production environment locally.
+
+### Preview Deployment
+
+Create PR to test on Vercel preview deployment:
+- Automatic preview URL
+- Production-like environment
+- Isolated from main deployment
+
+## Writing Verification Steps
+
+When submitting PRs, include verification steps in the description:
+
+### Example PR Template
+
+```markdown
+## Changes
+- Added video transition effects
+- Implemented new style template
+
+## Type of Change
+- [ ] Bug fix
+- [x] New feature
+- [ ] Breaking change
+
+## Verification Steps
+
+1. Start dev servers:
+   ```bash
+   pnpm dev
+   pnpm trigger
+   ```
+
+2. Create new video project
+3. Upload 3+ images
+4. Select "Luxury Estate" style
+5. Configure "Fade" transitions
+6. Generate video
+7. Verify transitions are smooth
+8. Download and play final video
+
+## Screenshots
+[Add screenshots/screen recordings for UI changes]
+
+## Database Changes
+- [ ] Schema changes require migration
+- [ ] Added new environment variables
+
+## Checklist
+- [x] Ran `pnpm lint`
+- [x] Tested locally
+- [x] Updated documentation (if needed)
+```
+
+## Future Testing Improvements
+
+Contributions welcome for:
+
+### Unit Testing
+
+Potential tools:
+- **Vitest**: Fast unit test runner
+- **Jest**: Popular testing framework
+- **Testing Library**: React component testing
+
+### Integration Testing
+
+Potential tools:
+- **Playwright**: End-to-end browser testing
+- **Cypress**: E2E testing with great DX
+
+### API Testing
+
+Potential tools:
+- **Supertest**: HTTP assertion library
+- **MSW**: Mock Service Worker for API mocking
+
+### Visual Regression
+
+Potential tools:
+- **Chromatic**: Storybook visual testing
+- **Percy**: Visual review platform
+
+## Contributing Tests
+
+Interested in adding automated testing? See the [Contributing Guide](/development/contributing) for:
+
+1. Setting up your development environment
+2. Understanding the codebase structure
+3. Submitting test infrastructure PRs
+4. Best practices for test coverage
+
+<Tip>
+When proposing testing infrastructure, start with a small proof-of-concept PR demonstrating the approach on a single component or feature.
+</Tip>
+
+## Next Steps
+
+- [Contributing Guide](/development/contributing) - Learn how to contribute
+- [Deployment Guide](/development/deployment) - Deploy your changes
+- [Architecture Overview](/getting-started/architecture) - Understand the system design

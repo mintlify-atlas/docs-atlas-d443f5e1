@@ -1,0 +1,739 @@
+---
+title: 'Workspaces'
+description: 'Organize teams, manage billing, and control access with multi-tenant workspace architecture'
+icon: 'building'
+---
+
+## Overview
+
+Workspaces provide complete organizational isolation in AI Studio. Each workspace has its own projects, users, billing, and settings. Think of workspaces as separate accounts for different companies or teams.
+
+## Workspace Architecture
+
+### Data Model
+
+```typescript
+// Source: lib/db/schema.ts
+export const workspace = pgTable("workspace", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  slug: text("slug").notNull().unique(),
+  
+  // Company details
+  organizationNumber: text("organization_number"),
+  contactEmail: text("contact_email"),
+  contactPerson: text("contact_person"),
+  
+  // White-label branding
+  logo: text("logo"),
+  primaryColor: text("primary_color"),
+  secondaryColor: text("secondary_color"),
+  
+  // Status & billing
+  status: text("status").notNull().default("active"),
+  plan: text("plan").notNull().default("free"),
+  
+  // Onboarding
+  onboardingCompleted: boolean("onboarding_completed").default(false),
+  
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+```
+
+### Workspace States
+
+<CardGroup cols={3}>
+  <Card title="Active" icon="check-circle">
+    Full access to all features.
+    
+    Users can:
+    - Create projects
+    - Generate content
+    - Invite team members
+    - Access billing
+  </Card>
+  
+  <Card title="Trial" icon="clock">
+    Limited trial period.
+    
+    Restrictions:
+    - Trial expiration date
+    - Feature limitations
+    - Upgrade prompts
+  </Card>
+  
+  <Card title="Suspended" icon="ban">
+    Access restricted.
+    
+    Reasons:
+    - Payment failure
+    - Policy violation
+    - Manual suspension
+    
+    ```typescript
+    suspendedAt: timestamp("suspended_at"),
+    suspendedReason: text("suspended_reason"),
+    ```
+  </Card>
+</CardGroup>
+
+## Creating a Workspace
+
+New workspaces are created during user onboarding:
+
+<Steps>
+  <Step title="Sign Up">
+    User creates an account via email or OAuth.
+    
+    ```typescript
+    // Source: lib/db/schema.ts
+    export const user = pgTable("user", {
+      id: text("id").primaryKey(),
+      email: text("email").notNull().unique(),
+      workspaceId: text("workspace_id").references(() => workspace.id),
+      role: text("role").notNull().default("member"),
+    });
+    ```
+  </Step>
+  
+  <Step title="Company Information">
+    Collect organization details:
+    
+    <Tabs>
+      <Tab title="Required Fields">
+        - Company name
+        - Contact email
+        - Contact person name
+      </Tab>
+      
+      <Tab title="Optional Fields">
+        - Organization number (for invoicing)
+        - Company logo
+        - Brand colors
+      </Tab>
+    </Tabs>
+    
+    ```typescript
+    organizationNumber: text("organization_number"),
+    contactEmail: text("contact_email"),
+    contactPerson: text("contact_person"),
+    ```
+  </Step>
+  
+  <Step title="Generate Slug">
+    Create a unique URL-friendly identifier:
+    
+    ```typescript
+    // Example: "acme-real-estate" from "Acme Real Estate"
+    slug: text("slug").notNull().unique()
+    ```
+    
+    Slugs are used in:
+    - Workspace URLs: `/workspace/acme-real-estate`
+    - API endpoints
+    - Subdomain routing (future)
+  </Step>
+  
+  <Step title="Set Initial Plan">
+    Assign starting subscription plan:
+    
+    ```typescript
+    export type WorkspacePlan = "free" | "pro" | "enterprise";
+    ```
+    
+    Default: `"free"`
+  </Step>
+  
+  <Step title="Complete Onboarding">
+    Mark onboarding as complete:
+    
+    ```typescript
+    onboardingCompleted: boolean("onboarding_completed").default(false)
+    ```
+    
+    Users are redirected to dashboard after completion.
+  </Step>
+</Steps>
+
+## Workspace Members
+
+Workspaces support team collaboration with role-based access control.
+
+### User Roles
+
+```typescript
+export type UserRole = "owner" | "admin" | "member";
+```
+
+<Tabs>
+  <Tab title="Owner">
+    **Full Control**
+    
+    Permissions:
+    - Manage billing
+    - Delete workspace
+    - Invite/remove any member
+    - Assign admin role
+    - Access all projects
+    - Modify workspace settings
+    
+    ```typescript
+    role: text("role").notNull().default("owner")
+    ```
+    
+    <Note>
+    Each workspace must have at least one owner.
+    </Note>
+  </Tab>
+  
+  <Tab title="Admin">
+    **Management Access**
+    
+    Permissions:
+    - Invite/remove members
+    - Access all projects
+    - Modify workspace settings
+    - View billing (cannot modify)
+    
+    Cannot:
+    - Delete workspace
+    - Remove owners
+    - Modify billing settings
+  </Tab>
+  
+  <Tab title="Member">
+    **Standard Access**
+    
+    Permissions:
+    - Create own projects
+    - View shared projects
+    - Collaborate on team projects
+    
+    Cannot:
+    - Invite users
+    - Modify workspace settings
+    - Access billing
+    - View other members' private projects
+  </Tab>
+</Tabs>
+
+### Invitation System
+
+Invite team members via email:
+
+```typescript
+// Source: lib/db/schema.ts
+export const invitation = pgTable("invitation", {
+  id: text("id").primaryKey(),
+  email: text("email").notNull(),
+  workspaceId: text("workspace_id").notNull(),
+  role: text("role").notNull().default("member"),
+  token: text("token").notNull().unique(),
+  expiresAt: timestamp("expires_at").notNull(),
+  acceptedAt: timestamp("accepted_at"),
+});
+```
+
+<Steps>
+  <Step title="Send Invitation">
+    Owner or admin invites a user:
+    
+    ```typescript
+    const invitation = await createInvitation({
+      email: "user@example.com",
+      workspaceId: workspace.id,
+      role: "member",
+      expiresAt: addDays(new Date(), 7), // 7-day expiration
+    });
+    ```
+  </Step>
+  
+  <Step title="Email Notification">
+    Recipient receives invitation email with:
+    - Workspace name
+    - Inviter name
+    - Role assignment
+    - Acceptance link with token
+    
+    ```typescript
+    const acceptUrl = `${baseUrl}/accept-invitation?token=${invitation.token}`;
+    ```
+  </Step>
+  
+  <Step title="Accept Invitation">
+    User clicks link and either:
+    - **Existing User**: Added to workspace
+    - **New User**: Creates account, then added
+    
+    ```typescript
+    acceptedAt: timestamp("accepted_at")
+    ```
+  </Step>
+  
+  <Step title="Join Workspace">
+    User's account is updated:
+    
+    ```typescript
+    await updateUser(userId, {
+      workspaceId: invitation.workspaceId,
+      role: invitation.role,
+    });
+    ```
+  </Step>
+</Steps>
+
+<Warning>
+Invitation links expire after 7 days. Expired invitations must be resent.
+</Warning>
+
+## Workspace Settings
+
+### Basic Information
+
+<Tabs>
+  <Tab title="Company Details">
+    Edit workspace information:
+    
+    ```tsx
+    <Form>
+      <Input name="name" label="Company Name" />
+      <Input name="contactEmail" label="Contact Email" />
+      <Input name="contactPerson" label="Contact Person" />
+      <Input name="organizationNumber" label="Org Number" />
+    </Form>
+    ```
+    
+    All fields can be updated by owners and admins.
+  </Tab>
+  
+  <Tab title="URL Slug">
+    Workspace slugs can be changed:
+    
+    ```typescript
+    slug: text("slug").notNull().unique()
+    ```
+    
+    <Warning>
+    Changing the slug will break existing bookmarks and links.
+    </Warning>
+  </Tab>
+</Tabs>
+
+### White-Label Branding
+
+Customize the workspace appearance:
+
+<Tabs>
+  <Tab title="Logo">
+    Upload a custom logo:
+    
+    ```typescript
+    logo: text("logo"), // URL to uploaded logo image
+    ```
+    
+    Logo specifications:
+    - Format: PNG, SVG (transparent background recommended)
+    - Size: 200x60px optimal
+    - Max file size: 2MB
+    
+    Displayed in:
+    - Dashboard header
+    - Email templates
+    - Shared project pages
+  </Tab>
+  
+  <Tab title="Brand Colors">
+    Set custom color scheme:
+    
+    ```typescript
+    primaryColor: text("primary_color"),   // Buttons, links
+    secondaryColor: text("secondary_color"), // Accents, highlights
+    ```
+    
+    Format: HEX color codes (e.g., `#3B82F6`)
+    
+    Applied to:
+    - UI components
+    - Buttons and CTAs
+    - Status badges
+    - Charts and graphs
+  </Tab>
+  
+  <Tab title="Preview">
+    Live preview of branding changes before saving:
+    
+    ```tsx
+    <BrandingPreview
+      logo={logo}
+      primaryColor={primaryColor}
+      secondaryColor={secondaryColor}
+    />
+    ```
+  </Tab>
+</Tabs>
+
+## Data Isolation
+
+All data is strictly isolated by workspace:
+
+### Project Isolation
+
+```typescript
+// Source: lib/db/schema.ts
+export const project = pgTable("project", {
+  id: text("id").primaryKey(),
+  workspaceId: text("workspace_id")
+    .notNull()
+    .references(() => workspace.id, { onDelete: "cascade" }),
+  userId: text("user_id")
+    .notNull()
+    .references(() => user.id, { onDelete: "cascade" }),
+});
+```
+
+<Info>
+Projects are automatically deleted when a workspace is deleted (`onDelete: "cascade"`).
+</Info>
+
+### Query Scoping
+
+All database queries are scoped to the current workspace:
+
+```typescript
+// Source: lib/db/queries.ts
+export async function getProjects(workspaceId: string) {
+  return await db
+    .select()
+    .from(project)
+    .where(eq(project.workspaceId, workspaceId))
+    .orderBy(desc(project.createdAt));
+}
+```
+
+### File Storage Isolation
+
+Files are organized by workspace in storage:
+
+```typescript
+// Source: lib/supabase.ts
+export function getImagePath(
+  workspaceId: string,
+  projectId: string,
+  fileName: string
+): string {
+  return `${workspaceId}/${projectId}/${fileName}`;
+}
+```
+
+**Storage Structure:**
+```
+storage/
+├── workspace-123/
+│   ├── project-abc/
+│   │   ├── original/
+│   │   │   ├── image-1.jpg
+│   │   │   └── image-2.jpg
+│   │   └── result/
+│   │       ├── image-1.jpg
+│   │       └── image-2.jpg
+│   └── project-def/
+└── workspace-456/
+```
+
+## Billing & Plans
+
+### Subscription Plans
+
+```typescript
+export type WorkspacePlan = "free" | "pro" | "enterprise";
+```
+
+<Tabs>
+  <Tab title="Free Plan">
+    **Included:**
+    - 5 projects per month
+    - 50 images per month
+    - 2 videos per month
+    - 1 team member
+    - Community support
+    
+    ```typescript
+    plan: text("plan").notNull().default("free")
+    ```
+  </Tab>
+  
+  <Tab title="Pro Plan">
+    **Included:**
+    - Unlimited projects
+    - Pay-per-use pricing
+    - Up to 10 team members
+    - Priority support
+    - Custom branding
+    - Invoice billing (eligible customers)
+    
+    Pricing:
+    - $99 per photo project (up to 10 images)
+    - $0.35 per video clip
+  </Tab>
+  
+  <Tab title="Enterprise Plan">
+    **Custom:**
+    - Volume discounts
+    - Unlimited team members
+    - Dedicated support
+    - SLA guarantees
+    - Custom integrations
+    - On-premise options
+    
+    Contact sales for pricing.
+  </Tab>
+</Tabs>
+
+### Payment Methods
+
+<CardGroup cols={2}>
+  <Card title="Stripe" icon="credit-card">
+    Pay-per-project with credit card:
+    
+    ```typescript
+    // Source: lib/db/schema.ts
+    export const projectPayment = pgTable("project_payment", {
+      id: text("id").primaryKey(),
+      projectId: text("project_id").notNull(),
+      paymentMethod: text("payment_method"), // "stripe"
+      stripeCheckoutSessionId: text("stripe_checkout_session_id"),
+      amountCents: integer("amount_cents").notNull(),
+      status: text("status").notNull().default("pending"),
+    });
+    ```
+    
+    Flow:
+    1. Create project
+    2. Checkout redirect
+    3. Payment confirmation
+    4. Processing starts
+  </Card>
+  
+  <Card title="Invoice" icon="file-invoice">
+    Monthly invoicing for Norwegian B2B customers:
+    
+    ```typescript
+    invoiceEligible: boolean("invoice_eligible").default(false),
+    invoiceEligibleAt: timestamp("invoice_eligible_at"),
+    ```
+    
+    Requirements:
+    - Valid organization number
+    - Norwegian company
+    - Admin approval
+    
+    Billing cycle: Monthly, NET 30
+  </Card>
+</CardGroup>
+
+### Invoice Management
+
+```typescript
+// Source: lib/db/schema.ts
+export const invoice = pgTable("invoice", {
+  id: text("id").primaryKey(),
+  workspaceId: text("workspace_id").notNull(),
+  totalAmountOre: integer("total_amount_ore").notNull(), // Amount in øre
+  status: text("status").notNull().default("draft"),
+  issueDate: timestamp("issue_date"),
+  dueDate: timestamp("due_date"),
+  paidAt: timestamp("paid_at"),
+});
+
+export const invoiceLineItem = pgTable("invoice_line_item", {
+  id: text("id").primaryKey(),
+  invoiceId: text("invoice_id"),
+  projectId: text("project_id"),
+  description: text("description").notNull(),
+  amountOre: integer("amount_ore").notNull(),
+  status: text("status").notNull().default("pending"),
+});
+```
+
+<Steps>
+  <Step title="Usage Tracking">
+    Line items created automatically:
+    
+    ```typescript
+    // When project starts processing
+    await createInvoiceLineItem({
+      workspaceId,
+      projectId,
+      description: `Photo Project: ${projectName}`,
+      amountOre: 99000, // 990 NOK
+      status: "pending",
+    });
+    ```
+  </Step>
+  
+  <Step title="Monthly Billing">
+    At month end, pending items grouped into invoice:
+    
+    ```typescript
+    const pendingItems = await getPendingLineItems(workspaceId);
+    const totalAmount = pendingItems.reduce(
+      (sum, item) => sum + item.amountOre,
+      0
+    );
+    
+    await createInvoice({
+      workspaceId,
+      totalAmountOre: totalAmount,
+      status: "draft",
+    });
+    ```
+  </Step>
+  
+  <Step title="Fiken Integration">
+    Invoice synced to Fiken accounting system:
+    
+    ```typescript
+    fikenInvoiceId: integer("fiken_invoice_id"),
+    fikenInvoiceNumber: text("fiken_invoice_number"),
+    ```
+  </Step>
+  
+  <Step title="Payment">
+    Customer pays via bank transfer, status updated:
+    
+    ```typescript
+    status: "paid",
+    paidAt: timestamp("paid_at"),
+    ```
+  </Step>
+</Steps>
+
+## Workspace Switching
+
+Users can belong to multiple workspaces:
+
+```typescript
+// User can be invited to multiple workspaces
+// Each workspace association has its own role
+```
+
+<Note>
+Currently, users have one primary workspace. Multi-workspace support is planned for a future release.
+</Note>
+
+## Admin Features
+
+### System Admins
+
+Special users with cross-workspace access:
+
+```typescript
+// Source: lib/db/schema.ts
+export const user = pgTable("user", {
+  // ...
+  isSystemAdmin: boolean("is_system_admin").default(false),
+});
+```
+
+**System Admin Powers:**
+- View all workspaces
+- Impersonate users
+- Suspend workspaces
+- Modify billing
+- Access audit logs
+
+### Workspace Suspension
+
+Admins can suspend workspaces:
+
+```typescript
+status: text("status").notNull().default("active"),
+suspendedAt: timestamp("suspended_at"),
+suspendedReason: text("suspended_reason"),
+```
+
+**Suspension Effects:**
+- Cannot create projects
+- Cannot process images
+- Cannot generate videos
+- Read-only access to existing content
+- Cannot invite members
+
+**Common Reasons:**
+- Payment failure
+- Terms of service violation
+- Account security issues
+- Manual admin action
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Workspace Organization">
+    **Single Company = Single Workspace**
+    
+    Even if you have multiple offices or teams, use one workspace with proper team member roles.
+    
+    **Exceptions:**
+    - Separate legal entities
+    - Different billing requirements
+    - Complete data isolation needed
+  </Accordion>
+  
+  <Accordion title="Role Assignment">
+    Follow the principle of least privilege:
+    
+    - **Owners**: 1-2 key decision makers
+    - **Admins**: Department heads, team leads
+    - **Members**: Everyone else
+    
+    Regularly audit role assignments.
+  </Accordion>
+  
+  <Accordion title="Branding Guidelines">
+    For consistent branding:
+    
+    - Use company logo (not personal photos)
+    - Choose colors that match your brand
+    - Test color contrast for accessibility
+    - Keep logo files updated
+  </Accordion>
+  
+  <Accordion title="Invitation Management">
+    - Use company email addresses
+    - Set appropriate roles before sending
+    - Remove inactive members
+    - Resend expired invitations promptly
+  </Accordion>
+</AccordionGroup>
+
+## Security
+
+<Tabs>
+  <Tab title="Data Encryption">
+    All workspace data is encrypted:
+    
+    - **At rest**: Database encryption
+    - **In transit**: TLS 1.3
+    - **File storage**: Server-side encryption
+  </Tab>
+  
+  <Tab title="Access Control">
+    Row-level security enforced:
+    
+    ```sql
+    -- Example RLS policy
+    CREATE POLICY workspace_isolation ON project
+      USING (workspace_id = current_setting('app.current_workspace_id'));
+    ```
+  </Tab>
+  
+  <Tab title="Audit Logs">
+    Critical actions are logged:
+    
+    - User invitations
+    - Role changes
+    - Workspace settings updates
+    - Billing events
+    - Suspension actions
+  </Tab>
+</Tabs>

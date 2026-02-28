@@ -1,0 +1,184 @@
+---
+title: 'Process Image'
+description: 'Apply AI-powered enhancements to uploaded real estate photos'
+---
+
+## POST /api/process-image
+
+Processes an uploaded image using AI to apply style transformations based on a prompt. This endpoint enhances real estate photos using the Nano Banana Pro AI model.
+
+### Authentication
+
+This endpoint requires authentication. Include your session token in the request.
+
+### Request Body
+
+<ParamField body="imageId" type="string" required>
+  The ID of the image generation record to process. This should reference an existing image in the database with status `pending`.
+</ParamField>
+
+### Request Example
+
+```bash
+curl -X POST https://yourdomain.com/api/process-image \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_SESSION_TOKEN" \
+  -d '{
+    "imageId": "550e8400-e29b-41d4-a716-446655440000"
+  }'
+```
+
+```json Request
+{
+  "imageId": "550e8400-e29b-41d4-a716-446655440000"
+}
+```
+
+### Response
+
+<ResponseField name="success" type="boolean">
+  Indicates whether the processing completed successfully.
+</ResponseField>
+
+<ResponseField name="resultUrl" type="string">
+  The URL of the processed result image stored in Supabase.
+</ResponseField>
+
+<ResponseField name="message" type="string">
+  Optional message, such as "Already processed" if the image was previously completed.
+</ResponseField>
+
+<ResponseField name="error" type="string">
+  Error message if the request failed.
+</ResponseField>
+
+<ResponseField name="details" type="string">
+  Additional error details for debugging.
+</ResponseField>
+
+### Response Examples
+
+<ResponseExample>
+```json Success Response
+{
+  "success": true,
+  "resultUrl": "https://storage.supabase.co/workspace/project/result.jpg"
+}
+```
+</ResponseExample>
+
+<ResponseExample>
+```json Already Processed
+{
+  "success": true,
+  "message": "Already processed"
+}
+```
+</ResponseExample>
+
+<ResponseExample>
+```json Error Response
+{
+  "error": "Processing failed",
+  "details": "Failed to fetch original image: 404"
+}
+```
+</ResponseExample>
+
+### Status Codes
+
+<ResponseField name="200" type="Success">
+  Image processed successfully or already completed.
+</ResponseField>
+
+<ResponseField name="400" type="Bad Request">
+  Missing `imageId` parameter.
+</ResponseField>
+
+<ResponseField name="404" type="Not Found">
+  Image record not found in database.
+</ResponseField>
+
+<ResponseField name="500" type="Internal Server Error">
+  Processing failed due to AI service error or internal error.
+</ResponseField>
+
+## Processing Flow
+
+1. **Validation** - Verifies the image record exists and hasn't been processed
+2. **Status Update** - Sets status to `processing`
+3. **Upload to Fal.ai** - Uploads the original image to Fal.ai storage
+4. **AI Processing** - Calls Nano Banana Pro AI model with the image and prompt
+5. **Save Result** - Downloads and stores the result in Supabase storage
+6. **Database Update** - Updates the image record with `completed` status and result URL
+7. **Project Counts** - Updates the project's completed image count
+
+## Image Generation Schema
+
+The `imageId` parameter references the `imageGeneration` table:
+
+```typescript
+{
+  id: string;                    // UUID
+  workspaceId: string;
+  userId: string;
+  projectId: string;
+  originalImageUrl: string;      // Source image URL
+  resultImageUrl: string | null; // Processed image URL
+  prompt: string;                // AI transformation prompt
+  status: "pending" | "processing" | "completed" | "failed";
+  errorMessage: string | null;
+  version: number;               // Edit version (1, 2, 3...)
+  parentId: string | null;       // Links to original for version tracking
+  metadata: object | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+```
+
+## AI Model Configuration
+
+This endpoint uses the **Nano Banana Pro Edit** model with the following parameters:
+
+<ParamField body="prompt" type="string">
+  The style transformation prompt from the image generation record.
+</ParamField>
+
+<ParamField body="image_urls" type="string[]">
+  Array containing the original image URL uploaded to Fal.ai storage.
+</ParamField>
+
+<ParamField body="num_images" type="number" default="1">
+  Number of images to generate (always 1 for this endpoint).
+</ParamField>
+
+<ParamField body="output_format" type="string" default="jpeg">
+  Output format for the processed image.
+</ParamField>
+
+## Health Check
+
+You can verify the API is running with a GET request:
+
+```bash
+curl https://yourdomain.com/api/process-image
+```
+
+```json Response
+{
+  "status": "ok"
+}
+```
+
+## Notes
+
+- Images are processed asynchronously via the API or Trigger.dev background jobs
+- The endpoint prevents duplicate processing by checking if status is already `completed`
+- All images are stored in Supabase with workspace/project organization
+- Failed processing updates the status to `failed` with an error message
+- Project counts are automatically updated after processing completes
+
+## Related Endpoints
+
+- [Inpaint Image](/api-reference/images/inpaint) - Edit specific areas of an image
+- [Image Status](/api-reference/images/status) - Check processing status
