@@ -1,0 +1,143 @@
+{
+  "projectType": "saas",
+  "projectName": "AI Studio",
+  "projectDescription": "AI-powered real estate photo editing and video creation platform with team workspaces and white-label capabilities",
+  "theme": "palm",
+  "primaryColor": "#0EA5E9",
+  "lightColor": "#38BDF8",
+  "darkColor": "#0284C7",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "key-concepts"
+            ]
+          },
+          {
+            "group": "Core Features",
+            "pages": [
+              "features/photo-editing",
+              "features/video-creation",
+              "features/workspaces",
+              "features/team-collaboration",
+              "features/style-templates"
+            ]
+          },
+          {
+            "group": "Platform",
+            "pages": [
+              "platform/pricing",
+              "platform/billing",
+              "platform/admin-panel",
+              "platform/white-label"
+            ]
+          },
+          {
+            "group": "Integrations",
+            "pages": [
+              "integrations/fal-ai",
+              "integrations/supabase",
+              "integrations/trigger-dev",
+              "integrations/stripe",
+              "integrations/resend"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Development",
+        "groups": [
+          {
+            "group": "Setup",
+            "pages": [
+              "development/setup",
+              "development/environment",
+              "development/database"
+            ]
+          },
+          {
+            "group": "Architecture",
+            "pages": [
+              "development/architecture",
+              "development/schema",
+              "development/background-jobs",
+              "development/authentication"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "development/deployment",
+              "development/testing",
+              "development/contributing"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Authentication",
+            "pages": [
+              "api-reference/auth/overview",
+              "api-reference/auth/sessions"
+            ]
+          },
+          {
+            "group": "Projects",
+            "pages": [
+              "api-reference/projects/create",
+              "api-reference/projects/list",
+              "api-reference/projects/get"
+            ]
+          },
+          {
+            "group": "Images",
+            "pages": [
+              "api-reference/images/process",
+              "api-reference/images/inpaint",
+              "api-reference/images/status"
+            ]
+          },
+          {
+            "group": "Videos",
+            "pages": [
+              "api-reference/videos/create",
+              "api-reference/videos/compile",
+              "api-reference/videos/status"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "AI-powered photo editing with style templates",
+    "Automated video generation from property photos",
+    "Multi-tenant workspace system",
+    "Team collaboration with role-based access",
+    "Integrated billing with Stripe and invoice support",
+    "Background job processing with Trigger.dev",
+    "White-label branding capabilities",
+    "Admin panel for platform management"
+  ],
+  "publicApiSurface": [
+    "/api/auth - Better Auth endpoints",
+    "/api/process-image - AI image processing",
+    "/api/inpaint-image - Image inpainting",
+    "/api/trigger-video - Video generation trigger",
+    "/api/stripe/checkout - Payment checkout",
+    "/api/webhooks/stripe - Stripe webhooks",
+    "trigger/process-image.ts - Background image processing",
+    "trigger/generate-video-clip.ts - Video clip generation",
+    "trigger/compile-video.ts - Video compilation",
+    "trigger/video-orchestrator.ts - Video workflow orchestration"
+  ]
+}
